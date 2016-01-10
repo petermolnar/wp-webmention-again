@@ -1,0 +1,16 @@
+{
+    "name": "petermolnar/wp-webmention-again",
+    "description": "",
+    "require": {
+        "php": ">=5.3.0",
+        "mf2/mf2": "0.2.*"
+    },
+    "license": "GPLv3",
+    "authors": [
+        {
+            "name": "Peter Molnar",
+            "email": "hello@petermolnar.eu",
+            "homepage": "https://petermolnar.eu"
+        }
+    ]
+}

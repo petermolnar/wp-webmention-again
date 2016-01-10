@@ -1,0 +1,74 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
+        "This file is @generated automatically"
+    ],
+    "hash": "0eb0473bfbeea8c0729e77c3e7687bb8",
+    "content-hash": "46f4a82eac34d91e4caceddae7feba9e",
+    "packages": [
+        {
+            "name": "mf2/mf2",
+            "version": "v0.2.12",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/indieweb/php-mf2.git",
+                "reference": "6701504876d6c9242eb310b35f41d40d9785ab4e"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/indieweb/php-mf2/zipball/6701504876d6c9242eb310b35f41d40d9785ab4e",
+                "reference": "6701504876d6c9242eb310b35f41d40d9785ab4e",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=5.3.0"
+            },
+            "require-dev": {
+                "phpunit/phpunit": "3.7.*"
+            },
+            "suggest": {
+                "barnabywalters/mf-cleaner": "To more easily handle the canonical data php-mf2 gives you"
+            },
+            "bin": [
+                "bin/fetch-mf2",
+                "bin/parse-mf2"
+            ],
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "Mf2/Parser.php"
+                ]
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Barnaby Walters",
+                    "homepage": "http://waterpigs.co.uk"
+                }
+            ],
+            "description": "A pure, generic microformats2 parser — makes HTML as easy to consume as a JSON API",
+            "keywords": [
+                "html",
+                "microformats",
+                "microformats 2",
+                "parser",
+                "semantic"
+            ],
+            "time": "2015-07-12 14:10:01"
+        }
+    ],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {
+        "php": ">=5.3.0"
+    },
+    "platform-dev": []
+}
