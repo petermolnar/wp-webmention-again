@@ -1,9 +1,24 @@
 {
     "name": "petermolnar/wp-webmention-again",
     "description": "",
+    "repositories": [
+        {
+            "type": "package",
+            "package": {
+                "name": "dissolve/single-emoji-recognizer",
+                "version": "0.1",
+                "source": {
+                    "type": "git",
+                    "url": "https://github.com/dissolve/single-emoji-recognizer.git",
+                    "reference": "origin/master"
+                }
+            }
+        }
+    ],
     "require": {
         "php": ">=5.3.0",
-        "mf2/mf2": "0.2.*"
+        "mf2/mf2": "0.2.*",
+        "dissolve/single-emoji-recognizer": "0.1"
     },
     "license": "GPLv3",
     "authors": [

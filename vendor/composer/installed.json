@@ -53,5 +53,17 @@
             "parser",
             "semantic"
         ]
+    },
+    {
+        "name": "dissolve/single-emoji-recognizer",
+        "version": "0.1",
+        "version_normalized": "0.1.0.0",
+        "source": {
+            "type": "git",
+            "url": "https://github.com/dissolve/single-emoji-recognizer.git",
+            "reference": "origin/master"
+        },
+        "type": "library",
+        "installation-source": "source"
     }
 ]

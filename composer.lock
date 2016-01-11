@@ -4,9 +4,19 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
         "This file is @generated automatically"
     ],
-    "hash": "0eb0473bfbeea8c0729e77c3e7687bb8",
-    "content-hash": "46f4a82eac34d91e4caceddae7feba9e",
+    "hash": "8a8be50ebb1ed19140da3a2136e5d0da",
+    "content-hash": "9b7917b522cc2bdcaf0a775ecfe024f0",
     "packages": [
+        {
+            "name": "dissolve/single-emoji-recognizer",
+            "version": "0.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/dissolve/single-emoji-recognizer.git",
+                "reference": "origin/master"
+            },
+            "type": "library"
+        },
         {
             "name": "mf2/mf2",
             "version": "v0.2.12",
