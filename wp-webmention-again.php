@@ -381,6 +381,17 @@ class WP_WEBMENTION_AGAIN {
 					//add_post_meta($post->ID, static::meta_received, $m, false);
 					continue;
 				}
+				elseif ($parsed === true) {
+					static::debug("  duplicate or something else, but this queue element has to be ignored; deleting queue entry");
+					delete_post_meta($post_id, static::meta_received, $m);
+				}
+				elseif (is_numeric($parsed)) {
+					static::debug("  all went well, we have a comment id: {$parsed}, deleting queue entry");
+					delete_post_meta($post_id, static::meta_received, $m);
+				}
+				else {
+					die("This is unexpected.");
+				}
 
 				static::debug("  it looks like we're done, and this webmention was added as a comment");
 			}
@@ -454,8 +465,9 @@ class WP_WEBMENTION_AGAIN {
 			}
 		}
 
-		if (!empty($content))
-			$c = static::try_parse_comment( $post_id, $source, $target, $content );
+		if (!empty($content)) {
+			return static::try_parse_comment( $post_id, $source, $target, $content );
+		}
 
 		return false;
 	}
@@ -478,10 +490,6 @@ class WP_WEBMENTION_AGAIN {
 		// un-arrayed
 		if (isset($content['items']['properties']) && isset($content['items']['type'])) {
 			$item = $content['items'];
-			if (!isset($item['type']) || ($item['type'] != 'h-entry')) {
-				static::debug('    no parseable h-entry found, saving as standard mention comment');
-				return true;
-			}
 		}
 		elseif (is_array($content['items']) && !empty($content['items']['type'])) {
 			foreach ($content['items'] as $i) {
@@ -496,7 +504,19 @@ class WP_WEBMENTION_AGAIN {
 
 		if (!$item || empty($item)) {
 			static::debug('    no parseable h-entry found, saving as standard mention comment');
-			return true;
+			$c = array (
+				'comment_author'				=> $source,
+				'comment_author_url'		=> $source,
+				'comment_author_email'	=> '',
+				'comment_post_ID'				=> $post_id,
+				'comment_type'					=> 'webmention',
+				'comment_date'					=> date("Y-m-d H:i:s"),
+				'comment_date_gmt'			=> date("Y-m-d H:i:s"),
+				'comment_agent'					=> __CLASS__,
+				'comment_approved' 			=> 0,
+				'comment_content'				=> sprintf(__('This entry was webmentioned on <a href="%s">%s</a>.'), $source, $source)
+			);
+			return static::insert_comment ($post_id, $source, $target, $c, $raw );
 		}
 
 		// process author
@@ -527,18 +547,16 @@ class WP_WEBMENTION_AGAIN {
 				}
 			}
 
-			if (isset($a['url']) && !empty($a['url'])) {
-				if (is_array($a['url']))
-					$author_url = array_pop($a['url']);
-				else
-					$author_url = $a['url'];
-			}
-
-			$author = $a;
+			//if (isset($a['url']) && !empty($a['url'])) {
+				//if (is_array($a['url']))
+					//$author_url = array_pop($a['url']);
+				//else
+					//$author_url = $a['url'];
+			//}
 		}
 
 		// process type
-		$type = 'comment';
+		$type = 'webmention';
 
 		foreach ( static::mftypes() as $k => $mapped) {
 			if (is_array($item['properties']) && isset($item['properties'][$mapped]))
@@ -570,11 +588,11 @@ class WP_WEBMENTION_AGAIN {
 			$date = time();
 
 		$name = empty($author_name) ? $source : $author_name;
-		$url = empty($author_url) ? $source : $author_url;
+		//$url = empty($author_url) ? $source : $author_url;
 
 		$c = array (
 			'comment_author'				=> $name,
-			'comment_author_url'		=> $url,
+			'comment_author_url'		=> $source,
 			'comment_author_email'	=> '',
 			'comment_post_ID'				=> $post_id,
 			'comment_type'					=> $type,
@@ -673,6 +691,10 @@ class WP_WEBMENTION_AGAIN {
 			// full raw response for the vote, just in case
 			update_comment_meta( $comment_id, 'webmention_source_mf2', $raw );
 
+			// full raw response for the vote, just in case
+			//update_comment_meta( $comment_id, 'webmention_source', $ );
+
+
 			// info
 			$r = "new comment inserted for {$post_id} as #{$comment_id}";
 
@@ -753,18 +775,6 @@ class WP_WEBMENTION_AGAIN {
 	/**
 	 *
 	 */
-	public static function mfmap ( $mf2 ) {
-		$map = static::mftypes();
-
-		foreach ($map as $k => $mapped) {
-			if (is_array( $mf2) && isset($mf2[$mapped]))
-				return $k;
-		}
-
-		// fallback
-		return 'comment';
-	}
-
 	public static function mftypes () {
 		$map = array (
 			 // http://indiewebcamp.com/reply
@@ -803,16 +813,6 @@ class WP_WEBMENTION_AGAIN {
 
 		return $mf2;
 	}
-	/**
-	 *
-	 */
-	//public static function extract_urls( &$text ) {
-		//$matches = array();
-		//preg_match_all("/\b(?:http|https)\:\/\/?[a-zA-Z0-9\.\/\?\:@\-_=#]+\.[a-zA-Z0-9\.\/\?\:@\-_=#]*/i", $text, $matches);
-
-		//$matches = $matches[0];
-		//return $matches;
-	//}
 
 	/**
 	 * validates a post object if it really is a post
