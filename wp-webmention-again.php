@@ -10,7 +10,6 @@ License: GPLv3
 Required minimum PHP version: 5.3
 */
 
-
 if (!class_exists('WP_WEBMENTION_AGAIN')):
 
 // global send_webmention function
@@ -138,12 +137,12 @@ class WP_WEBMENTION_AGAIN {
 	 */
 	public function __construct() {
 
+		add_action( 'init', array( &$this, 'init'));
+
 		add_action( 'parse_query', array( &$this, 'receive' ) );
 
 		add_action( 'wp_head', array( &$this, 'html_header' ), 99 );
 		add_action( 'send_headers', array( &$this, 'http_header' ) );
-
-		add_action( 'init', array( &$this, 'init'));
 
 		// this is mostly for debugging reasons
 		register_activation_hook( __FILE__ , array( &$this, 'plugin_activate' ) );
@@ -201,6 +200,8 @@ class WP_WEBMENTION_AGAIN {
 		if ( version_compare( phpversion(), 5.3, '<' ) ) {
 			die( 'The minimum PHP version required for this plugin is 5.3' );
 		}
+
+		flush_rewrite_rules( true );
 	}
 
 	/**
@@ -215,6 +216,8 @@ class WP_WEBMENTION_AGAIN {
 
 		wp_unschedule_event( time(), static::cron_send );
 		wp_clear_scheduled_hook( static::cron_send );
+
+		flush_rewrite_rules( true );
 	}
 
 
@@ -276,7 +279,7 @@ class WP_WEBMENTION_AGAIN {
 	 * @return array extended vars
 	 */
 	public function add_query_var($vars) {
-		$vars[] = static::endpoint();
+		array_push($vars, static::endpoint());
 		return $vars;
 	}
 
@@ -356,9 +359,6 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 
-
-
-
 	/**
 	 * parse & queue incoming webmention endpoint requests
 	 *
@@ -425,7 +425,7 @@ class WP_WEBMENTION_AGAIN {
 			echo 'Webmention accepted in the queue.';
 		}
 		else {
-			status_header( 503 );
+			status_header( 500 );
 			echo 'Something went wrong; please try again later!';
 		}
 
@@ -887,11 +887,14 @@ class WP_WEBMENTION_AGAIN {
 			// full raw response for the vote, just in case
 			update_comment_meta( $comment_id, 'webmention_source_mf2', $raw );
 
+			// original request
+			update_comment_meta( $comment_id, 'webmention_original', array( 'target' => $target, 'source' => $source) );
+
 			// info
 			$r = "new comment inserted for {$post_id} as #{$comment_id}";
 
 			// notify author
-			wp_notify_postauthor( $comment_id );
+			// wp_notify_postauthor( $comment_id );
 		}
 		else {
 			$r = "something went wrong when trying to insert comment for post #{$post_id}";
@@ -949,15 +952,14 @@ class WP_WEBMENTION_AGAIN {
 		foreach ($posts as $post_id) {
 			$post = get_post($post_id);
 
-			if (!static::is_post($post))
+			if (!static::is_post($post)) {
+				delete_post_meta($post_id, static::meta_send);
 				continue;
+			}
 
 			static::debug("Trying to get urls for #{$post->ID}");
 
-		// stop selfpings on the same domain
-		if ( isset($options['use_shortlinks']) && $options['use_shortlinks'] == '1' )
-			$source = wp_get_shortlink( $post->ID );
-		else
+			// try to avoid redirects, so no shortlink is sent for now
 			$source = get_permalink( $post->ID );
 
 			// process the content as if it was the_content()
@@ -969,25 +971,27 @@ class WP_WEBMENTION_AGAIN {
 
 			$urls = array_unique( $urls );
 			$todo = $urls;
-
-			$pung = get_pung( $post->ID );
+			$failed = array();
+			$pung = static::get_pung( $post->ID );
 
 			foreach ( $urls as $target ) {
+				$target = strtolower($target);
 				static::debug('  url to ping: ' . $target );
 
 				// already pinged, skip
 				if (in_array( $target, $pung )) {
-					static::debug('  already pinged!' );
+					static::debug('    already pinged!' );
 					$todo = array_diff($todo, array($target));
 					continue;
 				}
 
 				// tried too many times
 				$try_key = static::meta_send . '_' . $target;
-				$tries = get_post_meta( $post->ID, $try_key, true );
-				if ($tries && is_numeric($tries) && $tries >= static::retry() ) {
+				$tries = intval(get_post_meta( $post->ID, $try_key, true ));
+				if ($tries && $tries >= static::retry() ) {
+					static::debug("    failed too many times; skipping");
 					$todo = array_diff($todo, array($target));
-					delete_post_meta($post->ID, $try_key);
+					array_push($failed, $try_key);
 					continue;
 				}
 
@@ -995,9 +999,9 @@ class WP_WEBMENTION_AGAIN {
 				$s = static::send($source, $target, $post->ID );
 
 				if (!$s) {
-					static::debug('  sending failed; retrying later');
 					$tries = $tries + 1;
-					add_post_meta($post->ID, $try_key, $tries, true );
+					static::debug("    sending failed; retrying later ({$tries} time)");
+					update_post_meta($post->ID, $try_key, $tries );
 					continue;
 				}
 				else {
@@ -1009,14 +1013,28 @@ class WP_WEBMENTION_AGAIN {
 			}
 
 			if (empty($todo)) {
-				static::debug('  no more urls to ping or no more tries left');
+				static::debug('  no more urls to ping or no more tries left, cleaning up');
+
+				foreach ($failed as $try_key)
+					delete_post_meta($post->ID, $try_key);
+
 				delete_post_meta($post->ID, static::meta_send);
-			}
-			else {
-				static::debug(json_encode($todo));
+
 			}
 
 		}
+	}
+
+	/**
+	 *
+	 */
+	protected static function get_pung ($post_id) {
+		$pung = get_pung( $post_id );
+		foreach ($pung as $k => $e ) {
+			$pung[$k] = strtolower($e);
+		}
+		$pung = array_unique($pung);
+		return $pung;
 	}
 
 	/**
@@ -1267,6 +1285,7 @@ class WP_WEBMENTION_AGAIN {
 
 		return false;
 	}
+
 
 
 	/**
