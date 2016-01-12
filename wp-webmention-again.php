@@ -14,70 +14,166 @@ Required minimum PHP version: 5.3
 if (!class_exists('WP_WEBMENTION_AGAIN')):
 
 // global send_webmention function
-//if (!function_exists('send_webmention')) {
-	//function send_webmention( $source, $target ) {
-		//return WP_WEBMENTION_AGAIN::send( $source, $target );
-	//}
-//}
+if (!function_exists('send_webmention')) {
+	function send_webmention( $source, $target ) {
+		return WP_WEBMENTION_AGAIN::send( $source, $target );
+	}
+}
 
+// something else might have loaded this already
 if ( !class_exists('Mf2\Parser') ) {
 	require (__DIR__ . '/vendor/autoload.php');
 }
 
+// if something has loaded Mf2 already, the autoload won't kick in,
+// and we need this
 if (!class_exists('EmojiRecognizer')) {
 	require (__DIR__ . '/vendor/dissolve/single-emoji-recognizer/src/emoji.php');
 }
 
 class WP_WEBMENTION_AGAIN {
 
+	// post meta key for queued incoming mentions
 	const meta_received = '_webmention_received';
+	// cron handle for processing incoming
 	const cron_received = 'webmention_received';
-	const interval_received = 90;
-
+	// post meta key for posts marked as outgoing and in need of processing
 	const meta_send = '_webmention_send';
+	// cron handle for processing outgoing
 	const cron_send = 'webmention_send';
-	const interval_send = 90;
+	// WP cache expiration seconds
+	const expire = 10;
 
-	const endp = 'webmentions_again';
+	/**
+	 * cron interval for processing incoming
+	 *
+	 * use 'wp-webmention-again_interval_received' to filter this integer
+	 *
+	 * @return int cron interval in seconds
+	 *
+	 */
+	protected static function interval_received () {
+		return apply_filters('wp-webmention-again_interval_received', 90);
+	}
 
+	/**
+	 * cron interval for processing outgoing
+	 *
+	 * use 'wp-webmention-again_interval_send' to filter this integer
+	 *
+	 * @return int cron interval in seconds
+	 *
+	 */
+	protected static function interval_send () {
+		return apply_filters('wp-webmention-again_interval_send', 90);
+	}
+
+	/**
+	 * max number of retries ( both for outgoing and incoming )
+	 *
+	 * use 'wp-webmention-again_retry' to filter this integer
+	 *
+	 * @return int cron interval in seconds
+	 *
+	 */
+	protected static function retry () {
+		return apply_filters('wp-webmention-again_retry', 5);
+	}
+
+	/**
+	 * endpoint for receiving webmentions
+	 *
+	 * use 'wp-webmention-again_endpoint' to filter this string
+	 *
+	 * @return string name of endpoint
+	 *
+	 */
+	protected static function endpoint() {
+		return apply_filters('wp-webmention-again_endpoint', 'webmention');
+	}
+
+	/**
+	 * maximum amount of posts per batch to be processed
+	 *
+	 * use 'wp-webmention-again_per_batch' to filter this int
+	 *
+	 * @return int posts per batch
+	 *
+	 */
+	protected static function per_batch () {
+		return apply_filters('wp-webmention-again_per_batch', 10);
+	}
+
+	/**
+	 * mapping for comment types -> mf2 names
+	 *
+	 * use 'wp-webmention-again_mftypes' to filter this array
+	 *
+	 * @return array array of comment_type => mf2_name entries
+	 *
+	 */
+	protected static function mftypes () {
+		$map = array (
+			 // http://indiewebcamp.com/reply
+			'reply' => 'in-reply-to',
+			// http://indiewebcamp.com/repost
+			'repost' => 'repost-of',
+			// http://indiewebcamp.com/like
+			'like' => 'like-of',
+			// http://indiewebcamp.com/favorite
+			'favorite' => 'favorite-of',
+			// http://indiewebcamp.com/bookmark
+			'bookmark' => 'bookmark-of',
+			//  http://indiewebcamp.com/rsvp
+			'rsvp' => 'rsvp',
+			// http://indiewebcamp.com/tag
+			'tag' => 'tag-of',
+		);
+
+		return apply_filters('wp-webmention-again_mftypes', $map );
+	}
+
+	/**
+	 * runs on plugin load
+	 */
 	public function __construct() {
 
-		//add_action( 'parse_query', array( &$this, 'receive' ) );
+		add_action( 'parse_query', array( &$this, 'receive' ) );
 
-		//add_action( 'wp_head', array( &$this, 'html_header' ), 99 );
-		//add_action( 'send_headers', array( &$this, 'http_header' ) );
+		add_action( 'wp_head', array( &$this, 'html_header' ), 99 );
+		add_action( 'send_headers', array( &$this, 'http_header' ) );
 
 		add_action( 'init', array( &$this, 'init'));
 
 		// this is mostly for debugging reasons
 		register_activation_hook( __FILE__ , array( &$this, 'plugin_activate' ) );
 		// clear schedules if there's any on deactivation
-		//register_deactivation_hook( __FILE__ , array( &$this, 'plugin_deactivate' ) );
-
-		// register the action for processing received
-		add_action( static::cron_received, array( &$this, 'process_received' ) );
-
-		// register action for sending
-		//add_action( static::cron_send, array( &$this, 'process_send' ) );
-
-	}
-
-	/**
-	 * init hook
-	 */
-	public function init() {
-		// add webmention endpoint to query vars
-		//add_filter( 'query_vars', array( &$this, 'query_var' ) );
+		register_deactivation_hook( __FILE__ , array( &$this, 'plugin_deactivate' ) );
 
 		// extend current cron schedules with our entry
 		add_filter( 'cron_schedules', array(&$this, 'add_cron_schedule' ));
 
-		if (!wp_get_schedule( static::cron_received )) {
-			wp_schedule_event( time(), 'daily', static::cron_received );
-		}
+		// register the action for processing received
+		add_action( static::cron_received, array( &$this, 'process_received' ) );
+
+		// register the action for processing received
+		add_action( static::cron_send, array( &$this, 'process_send' ) );
 
 		// additional comment types
 		add_action('admin_comment_types_dropdown', array(&$this, 'comment_types_dropdown'));
+
+		// register new posts
+		add_action('transition_post_status', array( &$this, 'queue_send') ,12,5);
+	}
+
+	/**
+	 * runs at WordPress init hook
+	 *
+	 */
+	public function init() {
+
+		// add webmention endpoint to query vars
+		add_filter( 'query_vars', array( &$this, 'add_query_var' ) );
 
 		// because this needs one more filter
 		add_filter('get_avatar_comment_types', array( &$this, 'add_comment_types'));
@@ -85,10 +181,21 @@ class WP_WEBMENTION_AGAIN {
 		// additional avatar filter
 		add_filter( 'get_avatar' , array(&$this, 'get_avatar'), 1, 5 );
 
+		if (!wp_get_schedule( static::cron_received )) {
+			wp_schedule_event( time(), static::cron_received, static::cron_received );
+		}
+
+		if (!wp_get_schedule( static::cron_send )) {
+			wp_schedule_event( time(), static::cron_send, static::cron_send );
+		}
+
 	}
 
 	/**
-	 * activation hook
+	 * plugin activation hook
+	 *
+	 * dies if PHP version is too low
+	 *
 	 */
 	public function plugin_activate() {
 		if ( version_compare( phpversion(), 5.3, '<' ) ) {
@@ -97,12 +204,17 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 	/**
-	 * deactivation hook
+	 * plugin deactivation hook
+	 *
+	 * makes sure there are no scheduled cron hooks left
+	 *
 	 */
 	public function plugin_deactivate () {
-		//static::debug('deactivating');
-		//wp_unschedule_event( time(), __CLASS__ );
-		//wp_clear_scheduled_hook( __CLASS__ );
+		wp_unschedule_event( time(), static::cron_received );
+		wp_clear_scheduled_hook( static::cron_received );
+
+		wp_unschedule_event( time(), static::cron_send );
+		wp_clear_scheduled_hook( static::cron_send );
 	}
 
 
@@ -116,23 +228,26 @@ class WP_WEBMENTION_AGAIN {
 	public function add_cron_schedule ( $schedules ) {
 
 		$schedules[ static::cron_received ] = array(
-			'interval' => static::interval_received,
-			'display' => sprintf(__( 'every %d seconds' ), static::interval_received )
+			'interval' => static::interval_received(),
+			'display' => sprintf(__( 'every %d seconds' ), static::interval_received() )
 		);
 
 		$schedules[ static::cron_send ] = array(
-			'interval' => static::interval_send,
-			'display' => sprintf(__( 'every %d seconds' ), static::interval_send )
+			'interval' => static::interval_send(),
+			'display' => sprintf(__( 'every %d seconds' ), static::interval_send() )
 		);
 
 		return $schedules;
 	}
 
 	/**
+	 * extends HTML header with webmention endpoint
+	 *
+	 * @output string two lines of HTML <link>
 	 *
 	 */
 	public function html_header () {
-		$endpoint = site_url( '?'. static::endp .'=endpoint' );
+		$endpoint = site_url( '?'. static::endpoint() .'=endpoint' );
 
 		// backwards compatibility with v0.1
 		echo '<link rel="http://webmention.org/" href="' . $endpoint . '" />' . "\n";
@@ -140,10 +255,13 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 	/**
+	 * extends HTTP response header with webmention endpoints
+	 *
+	 * @output two lines of Link: in HTTP header
 	 *
 	 */
 	public function http_header() {
-		$endpoint = site_url( '?'. static::endp .'=endpoint' );
+		$endpoint = site_url( '?'. static::endpoint() .'=endpoint' );
 
 		// backwards compatibility with v0.1
 		header( 'Link: <' . $endpoint . '>; rel="http://webmention.org/"', false );
@@ -153,16 +271,22 @@ class WP_WEBMENTION_AGAIN {
 	/**
 	 * add webmention to accepted query vars
 	 *
-	 * @param array $vars
+	 * @param array $vars current query vars
 	 *
 	 * @return array extended vars
 	 */
-	public function query_var($vars) {
-		$vars[] = static::endp;
+	public function add_query_var($vars) {
+		$vars[] = static::endpoint();
 		return $vars;
 	}
 
 	/**
+	 * get plugin options
+	 *
+	 * use 'wp-webmention-again_comment_types' to filter registered comment types
+	 * before being applied
+	 *
+	 * @return array plugin options
 	 *
 	 */
 	public static function get_options () {
@@ -173,18 +297,16 @@ class WP_WEBMENTION_AGAIN {
 		else
 			$options['comment_types'] = static::mftypes();
 
+		$options['comment_types'] = apply_filters('wp-webmention-again_comment_types', $options['comment_types']);
+
 		return $options;
 	}
 
 	/**
+	 * extends the current registered comment types in options to have
+	 * single char emoji as comment type
 	 *
-	 */
-	public static function set_options ( &$options ) {
-		return update_option( __CLASS__ , $options );
-	}
-
-
-	/**
+	 * @param char $reacji single emoticon character to add as comment type
 	 *
 	 */
 	public static function register_reacji ($reacji) {
@@ -192,7 +314,7 @@ class WP_WEBMENTION_AGAIN {
 
 		if (!in_array($reacji, $options['comment_types'])) {
 			$options['comment_types'][$reacji] = $reacji;
-			static::set_options($options);
+			update_option( __CLASS__ , $options );
 		}
 	}
 
@@ -215,7 +337,12 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 	/**
+	 * extend the abailable comment types in WordPress with the ones recognized
+	 * by the plugin, including reacji
 	 *
+	 * @param array $types current types
+	 *
+	 * @return array extended types
 	 */
 	public function add_comment_types ( $types ) {
 		$options = static::get_options();
@@ -230,16 +357,18 @@ class WP_WEBMENTION_AGAIN {
 
 
 
+
+
 	/**
-	 * parse incoming webmention endpoint requests
-	 * main 'receiver' worker
+	 * parse & queue incoming webmention endpoint requests
 	 *
 	 * @param mixed $wp WordPress Query
+	 *
 	 */
 	public function receive( $wp ) {
 
 		// check if it is a webmention request or not
-		if ( ! array_key_exists( static::endp, $wp->query_vars ) )
+		if ( ! array_key_exists( static::endpoint(), $wp->query_vars ) )
 			return false;
 
 		// plain text header
@@ -281,8 +410,15 @@ class WP_WEBMENTION_AGAIN {
 			exit;
 		}
 
+		// check if pings are allowed
+		if ( ! pings_open( $post_id ) ) {
+			status_header( 403 );
+			echo 'Pings are disabled for this post';
+			exit;
+		}
+
 		// queue here, the remote check will be async
-		$r = static::queue($source, $target, $post_id);
+		$r = static::queue_receive($source, $target, $post_id);
 
 		if ($r) {
 			status_header( 202 );
@@ -297,48 +433,45 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 	/**
+	 * add post meta for post with about incoming webmention request to be
+	 * processed later
 	 *
+	 * @param string $source source URL
+	 * @param string $target target URL
+	 * @param int $post_id Post ID
+	 *
+	 * @return bool|int result of add_post_meta
 	 */
-	public function get_received () {
-		global $wpdb;
-		$r = array();
+	protected static function queue_receive ($source, $target, $post_id) {
+		if(empty($post_id) || empty($source) || empty($target))
+			return false;
 
-		$dbname = "{$wpdb->prefix}postmeta";
-		$key = static::meta_received;
-		$db_command = "SELECT DISTINCT `post_id` FROM `{$dbname}` WHERE `meta_key` = '{$key}' LIMIT 10";
+		$val = array (
+			'source' => $source,
+			'target' => $target
+		);
 
-		static::debug($db_command);
-		static::debug('fetching current mentions');
-		try {
-			$q = $wpdb->get_results($db_command);
-		}
-		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
-		}
+		static::debug ("queueing {static::meta_received} meta for #{$post_id}; source: {$source}, target: {$target}");
+		$r = add_post_meta($post_id, static::meta_received, $val, false);
 
-		if (!empty($q) && is_array($q)) {
-			foreach ($q as $post) {
-				$r[] = $post->post_id;
-			}
-		}
+		if ($r == false )
+			static::debug ("adding {static::meta_received} meta for #{$post_id} failed");
 
 		return $r;
 	}
 
+
 	/**
 	 * worker method for doing received webmentions
-	 * works in 10 post per cron run, reschedules itself after that
+	 * triggered by cron
 	 *
 	 */
 	public function process_received () {
 
 		$posts = static::get_received();
 
-		if (empty($posts)) {
-
-			// re-schedule ourselves, but delay
+		if (empty($posts))
 			return true;
-		}
 
 		foreach ($posts as $post_id ) {
 			$received_mentions = get_post_meta ($post_id, static::meta_received, false);
@@ -355,58 +488,103 @@ class WP_WEBMENTION_AGAIN {
 					static::debug("  target or souce empty, aborting");
 					continue;
 				}
-				else {
-					static::debug("  target: {$_m['target']}, source: {$_m['source']}");
-				}
+
+				static::debug("  target: {$_m['target']}, source: {$_m['source']}");
 
 				// if we'be been here before, we have retried counter already
 				$retries = isset($_m['retries']) ? intval($_m['retries']) : 0;
 
 				// too many retries, drop this mention and walk away
-				if ($retries >= 500) {
-					static::debug("  this mention was tried earlier at least 5 times, drop it");
+				if ($retries >= static::retry() ) {
+					static::debug("  this mention was tried earlier and failed too many times, drop it");
+					delete_post_meta($post_id, static::meta_received, $m);
 					continue;
 				}
-				else {
-					$_m['retries'] = $retries + 1;
-				}
+
+				$_m['retries'] = $retries + 1;
 
 				// validate target
-				$parsed = static::try_get_remote( $post_id, $_m['source'], $_m['target'] );
+				$remote = static::try_receive_remote( $post_id, $_m['source'], $_m['target'] );
 
-				// parsing didn't go well, try again later
-				if ($parsed === false) {
+				if ($remote === false || empty($remote)) {
 					static::debug("  parsing this mention failed, retrying next time");
 					update_post_meta($post_id, static::meta_received, $_m, $m);
-					//add_post_meta($post->ID, static::meta_received, $m, false);
 					continue;
 				}
-				elseif ($parsed === true) {
-					static::debug("  duplicate or something else, but this queue element has to be ignored; deleting queue entry");
+
+				// we have remote data !
+				$c = static::try_parse_remote ($post_id, $_m['source'], $_m['target'], $remote);
+				$ins = static::insert_comment ($post_id, $_m['source'], $_m['target'], $remote, $c );
+
+				if ($ins === true) {
+					static::debug("  duplicate (or something similar): this queue element has to be ignored; deleting queue entry");
 					delete_post_meta($post_id, static::meta_received, $m);
 				}
-				elseif (is_numeric($parsed)) {
-					static::debug("  all went well, we have a comment id: {$parsed}, deleting queue entry");
+				elseif (is_numeric($ins)) {
+					static::debug("  all went well, we have a comment id: {$ins}, deleting queue entry");
 					delete_post_meta($post_id, static::meta_received, $m);
 				}
 				else {
-					die("This is unexpected.");
+					static::debug("This is unexpected. Try again.");
+					update_post_meta($post_id, static::meta_received, $_m, $m);
+					continue;
 				}
-
-				static::debug("  it looks like we're done, and this webmention was added as a comment");
 			}
 		}
-
-		// re-schedule ourselves immediately, we may not be finished with the mentions
-		// delete_post_meta($post->ID, static::meta_received, $m);
-		return true;
 	}
 
 	/**
-	 * remote
+	 * get posts which have queued incoming requests
+	 *
+	 * @return array array of WP Post objects or empty array
 	 */
-	public static function try_get_remote ( &$post_id, &$source, &$target ) {
+	protected static function get_received () {
 
+		global $wpdb;
+		$r = array();
+
+		$dbname = "{$wpdb->prefix}postmeta";
+		$key = static::meta_received;
+		$limit = static::per_batch();
+		$db_command = "SELECT DISTINCT `post_id` FROM `{$dbname}` WHERE `meta_key` = '{$key}' LIMIT {$limit}";
+
+		try {
+			$q = $wpdb->get_results($db_command);
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		if (!empty($q) && is_array($q)) {
+			foreach ($q as $post) {
+				$r[] = $post->post_id;
+			}
+		}
+
+		return $r;
+
+		/*
+		 * this does not work reliably
+		$args = array(
+			'posts_per_page' => static::per_batch(),
+			'meta_key' => static::meta_received,
+			//'meta_value' => '*',
+			'post_type' => 'any',
+			'post_status' => 'publish',
+		);
+		return get_posts( $args );
+		*/
+	}
+
+
+	/**
+	 * extended wp_remote_get with debugging
+	 *
+	 * @param string $source URL to pull
+	 *
+	 * @return array wp_remote_get array
+	 */
+	protected static function _wp_remote_get (&$source) {
 		$content = false;
 		static::debug("    fetching {$source}");
 		$url = htmlspecialchars_decode($source);
@@ -431,6 +609,27 @@ class WP_WEBMENTION_AGAIN {
 			static::debug('    missing body');
 			return false;
 		}
+
+		return $q;
+	}
+
+	/**
+	 * try to get contents of webmention originator
+	 *
+	 * @param int $post_id ID of post
+	 * @param string $source Originator URL
+	 * @param string $target Target URL
+	 *
+	 * @return bool|array false on error; plain array or Mf2 parsed (and
+	 *   flattened ) array of remote content on success
+	 */
+	protected static function try_receive_remote ( &$post_id, &$source, &$target ) {
+
+		$content = false;
+		$q = static::_wp_remote_get($source);
+
+		if ($q === false)
+			return false;
 
 		$t = $target;
 		$t = preg_replace('/https?:\/\/(?:www.)?/', '', $t);
@@ -457,37 +656,34 @@ class WP_WEBMENTION_AGAIN {
 		else {
 			static::debug("  content is (probably) html, trying to parse it with MF2");
 			try {
-				$content = Mf2\parse($q['body'], $url);
+				$content = Mf2\parse($q['body'], $source);
 			}
 			catch (Exception $e) {
 				static::debug('  parsing MF2 failed:' . $e->getMessage());
 				return false;
 			}
+
+			$content = static::flatten_mf2_array($content);
 		}
 
-		if (!empty($content)) {
-			return static::try_parse_comment( $post_id, $source, $target, $content );
-		}
-
-		return false;
+		return $content;
 	}
 
 	/**
+	 * try to convert remote content to comment
 	 *
+	 * @param int $post_id ID of post
+	 * @param string $source Originator URL
+	 * @param string $target Target URL
+	 * @param array $content (Mf2) array of remote content
+	 *
+	 * @return bool|int false on error; insterted comment ID on success
 	 */
-	public static function try_parse_comment ( &$post_id, &$source, &$target, &$raw ) {
-		$hentry = false;
-
-		$content = static::mf2_unarray($raw);
-
-		if (empty($content) || !is_array($content) || !isset($content['items']) || empty($content['items'])) {
-			static::debug('    nothing to parse :(');
-			return false;
-		}
+	protected static function try_parse_remote ( &$post_id, &$source, &$target, &$content ) {
 
 		$item = false;
 		$p_authors = array();
-		// un-arrayed
+
 		if (isset($content['items']['properties']) && isset($content['items']['type'])) {
 			$item = $content['items'];
 		}
@@ -514,9 +710,9 @@ class WP_WEBMENTION_AGAIN {
 				'comment_date_gmt'			=> date("Y-m-d H:i:s"),
 				'comment_agent'					=> __CLASS__,
 				'comment_approved' 			=> 0,
-				'comment_content'				=> sprintf(__('This entry was webmentioned on <a href="%s">%s</a>.'), $source, $source)
+				'comment_content'				=> sprintf(__('This entry was webmentioned on <a href="%s">%s</a>.'), $source, $source),
 			);
-			return static::insert_comment ($post_id, $source, $target, $c, $raw );
+			return $c;
 		}
 
 		// process author
@@ -546,13 +742,6 @@ class WP_WEBMENTION_AGAIN {
 					}
 				}
 			}
-
-			//if (isset($a['url']) && !empty($a['url'])) {
-				//if (is_array($a['url']))
-					//$author_url = array_pop($a['url']);
-				//else
-					//$author_url = $a['url'];
-			//}
 		}
 
 		// process type
@@ -588,7 +777,6 @@ class WP_WEBMENTION_AGAIN {
 			$date = time();
 
 		$name = empty($author_name) ? $source : $author_name;
-		//$url = empty($author_url) ? $source : $author_url;
 
 		$c = array (
 			'comment_author'				=> $name,
@@ -601,23 +789,31 @@ class WP_WEBMENTION_AGAIN {
 			'comment_agent'					=> __CLASS__,
 			'comment_approved' 			=> 0,
 			'comment_content'				=> $c,
+			'comment_avatar'				=> $avatar,
 		);
 
-		return static::insert_comment ($post_id, $source, $target, $c, $raw, $avatar );
+		return $c;
 	}
 
 	/**
 	 * Comment inserter
 	 *
 	 * @param string &$post_id post ID
-	 * @param array &$comment array formatted to match a WP Comment requirement
+	 * @param string &$source Originator URL
+	 * @param string &$target Target URL
 	 * @param mixed &$raw Raw format of the comment, like JSON response from the provider
-	 * @param string &$avatar Avatar string to be stored as comment meta
+	 * @param array &$comment array formatted to match a WP Comment requirement
 	 *
 	 */
-	public static function insert_comment ( &$post_id, &$source, &$target, &$comment, &$raw, &$avatar = '' ) {
+	protected static function insert_comment ( &$post_id, &$source, &$target, &$raw, &$comment ) {
 
 		$comment_id = false;
+
+		$avatar = false;
+		if( isset( $comment['comment_avatar'])) {
+			$avatar = $comment['comment_avatar'];
+			unset($comment['comment_avatar']);
+		}
 
 		// safety first
 		$comment['comment_author_email'] = filter_var ( $comment['comment_author_email'], FILTER_SANITIZE_EMAIL );
@@ -691,10 +887,6 @@ class WP_WEBMENTION_AGAIN {
 			// full raw response for the vote, just in case
 			update_comment_meta( $comment_id, 'webmention_source_mf2', $raw );
 
-			// full raw response for the vote, just in case
-			//update_comment_meta( $comment_id, 'webmention_source', $ );
-
-
 			// info
 			$r = "new comment inserted for {$post_id} as #{$comment_id}";
 
@@ -713,26 +905,302 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 
+
+
+
 	/**
+	 * triggered on post transition, applied when new status is publish, therefore
+	 * applied on edit of published posts as well
+	 * add a post meta to the post to be processed by the send processor
 	 *
+	 * @param string $new_status New post status
+	 * @param string $old_status Previous post status
+	 * @param object $post WP Post object
 	 */
-	public static function queue ($source, $target, $post_id) {
-		if(empty($post_id) || empty($source) || empty($target))
+	public function queue_send($new_status, $old_status, $post) {
+		if (!static::is_post($post)) {
+			static::debug("Woops, this is not a post.");
 			return false;
+		}
 
-		$val = array (
-			'source' => $source,
-			'target' => $target
-		);
+		if ($new_status != 'publish') {
+			static::debug("Not adding {$post->ID} to mention queue yet; not published");
+			return false;
+		}
 
-		static::debug ("queueing {static::meta_received} meta for #{$post_id}; source: {$source}, target: {$target}");
-		$r = add_post_meta($post_id, static::meta_received, $val, false);
 
-		if ($r == false )
-			static::debug ("adding {static::meta_received} meta for #{$post_id} failed");
+		if (! $r = add_post_meta($post->ID, static::meta_send, 1, true) )
+			static::debug("Tried adding post #{$post->ID} to mention queue, but it didn't go well");
 
 		return $r;
 	}
+
+	/**
+	 * Main send processor
+	 *
+	 *
+	 */
+	public function process_send () {
+		$posts = static::get_send();
+
+		if (empty($posts))
+			return false;
+
+		foreach ($posts as $post_id) {
+			$post = get_post($post_id);
+
+			if (!static::is_post($post))
+				continue;
+
+			static::debug("Trying to get urls for #{$post->ID}");
+
+		// stop selfpings on the same domain
+		if ( isset($options['use_shortlinks']) && $options['use_shortlinks'] == '1' )
+			$source = wp_get_shortlink( $post->ID );
+		else
+			$source = get_permalink( $post->ID );
+
+			// process the content as if it was the_content()
+			$content = static::get_the_content($post);
+			// get all urls in content
+			$urls = static::extract_urls($content);
+			// for special ocasions when someone wants to add to this list
+			$urls = apply_filters( 'webmention_links', $urls, $post->ID );
+
+			$urls = array_unique( $urls );
+			$todo = $urls;
+
+			$pung = get_pung( $post->ID );
+
+			foreach ( $urls as $target ) {
+				static::debug('  url to ping: ' . $target );
+
+				// already pinged, skip
+				if (in_array( $target, $pung )) {
+					static::debug('  already pinged!' );
+					$todo = array_diff($todo, array($target));
+					continue;
+				}
+
+				// tried too many times
+				$try_key = static::meta_send . '_' . $target;
+				$tries = get_post_meta( $post->ID, $try_key, true );
+				if ($tries && is_numeric($tries) && $tries >= static::retry() ) {
+					$todo = array_diff($todo, array($target));
+					delete_post_meta($post->ID, $try_key);
+					continue;
+				}
+
+				// try sending
+				$s = static::send($source, $target, $post->ID );
+
+				if (!$s) {
+					static::debug('  sending failed; retrying later');
+					$tries = $tries + 1;
+					add_post_meta($post->ID, $try_key, $tries, true );
+					continue;
+				}
+				else {
+					static::debug('  sending succeeded!');
+					add_ping( $post->ID, $target );
+					$todo = array_diff($todo, array($target));
+				}
+
+			}
+
+			if (empty($todo)) {
+				static::debug('  no more urls to ping or no more tries left');
+				delete_post_meta($post->ID, static::meta_send);
+			}
+			else {
+				static::debug(json_encode($todo));
+			}
+
+		}
+	}
+
+	/**
+	 * get all posts that have meta entry for sending
+	 *
+	 * @return array of WP Post objects
+	 */
+	protected static function get_send () {
+		global $wpdb;
+		$r = array();
+
+		$dbname = "{$wpdb->prefix}postmeta";
+		$key = static::meta_send;
+		$limit = static::per_batch();
+		$db_command = "SELECT DISTINCT `post_id` FROM `{$dbname}` WHERE `meta_key` = '{$key}' LIMIT {$limit}";
+
+		try {
+			$q = $wpdb->get_results($db_command);
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		if (!empty($q) && is_array($q)) {
+			foreach ($q as $post) {
+				$r[] = $post->post_id;
+			}
+		}
+
+		return $r;
+
+		/*
+		 * this is not reliable
+		$args = array(
+			//'posts_per_page' => static::per_batch(),
+			'posts_per_page' => -1,
+			'meta_key' => static::meta_send,
+			'meta_value' => 1,
+			'post_type' => 'any',
+			'post_status' => 'publish',
+		);
+
+
+		return get_posts( $args );
+		*/
+
+	}
+
+	/**
+	 * send a single webmention
+	 * based on [webmention](https://github.com/pfefferle/wordpress-webmention)
+	 *
+	 */
+	public static function send ( $source, $target, $post_id = false ) {
+		$options = static::get_options();
+
+		// stop selfpings on the same URL
+		if ( isset($options['disable_selfpings_same_url']) &&
+				 $options['disable_selfpings_same_url'] == '1' &&
+				 $source === $target
+			 )
+			return false;
+
+		// stop selfpings on the same domain
+		if ( isset($options['disable_selfpings_same_domain']) &&
+				 $options['disable_selfpings_same_domain'] == '1' &&
+				 parse_url( $source, PHP_URL_HOST ) == parse_url( $target, PHP_URL_HOST )
+			 )
+			return false;
+
+		// discover the webmention endpoint
+		$webmention_server_url = static::discover_endpoint( $target );
+
+		// if I can't find an endpoint, perhaps you can!
+		$webmention_server_url = apply_filters( 'webmention_server_url', $webmention_server_url, $target );
+
+		if ( $webmention_server_url ) {
+			$args = array(
+				'body' => 'source=' . urlencode( $source ) . '&target=' . urlencode( $target ),
+				'timeout' => 100,
+			);
+
+			static::debug('Sending webmention to: ' .$webmention_server_url . ' as: ' . $args['body']);
+			$response = wp_remote_post( $webmention_server_url, $args );
+
+			// use the response to do something usefull
+			// do_action( 'webmention_post_send', $response, $source, $target, $post_ID );
+
+			return $response;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Finds a WebMention server URI based on the given URL
+	 *
+	 * code from [webmention](https://github.com/pfefferle/wordpress-webmention)
+	 *
+	 * Checks the HTML for the rel="http://webmention.org/" link and http://webmention.org/ headers. It does
+	 * a check for the http://webmention.org/ headers first and returns that, if available. The
+	 * check for the rel="http://webmention.org/" has more overhead than just the header.
+	 *
+	 * @param string $url URL to ping
+	 *
+	 * @return bool|string False on failure, string containing URI on success
+	 */
+	protected static function discover_endpoint( $url ) {
+		/** @todo Should use Filter Extension or custom preg_match instead. */
+		$parsed_url = parse_url( $url );
+
+		if ( ! isset( $parsed_url['host'] ) ) { // Not an URL. This should never happen.
+			return false;
+		}
+
+		// do not search for a WebMention server on our own uploads
+		$uploads_dir = wp_upload_dir();
+		if ( 0 === strpos( $url, $uploads_dir['baseurl'] ) ) {
+			return false;
+		}
+
+		$response = wp_remote_head( $url, array( 'timeout' => 100, 'httpversion' => '1.0' ) );
+
+		if ( is_wp_error( $response ) ) {
+			return false;
+		}
+
+		// check link header
+		if ( $links = wp_remote_retrieve_header( $response, 'link' ) ) {
+			if ( is_array( $links ) ) {
+				foreach ( $links as $link ) {
+					if ( preg_match( '/<(.[^>]+)>;\s+rel\s?=\s?[\"\']?(http:\/\/)?webmention(.org)?\/?[\"\']?/i', $link, $result ) ) {
+						return self::make_url_absolute( $url, $result[1] );
+					}
+				}
+			} else {
+				if ( preg_match( '/<(.[^>]+)>;\s+rel\s?=\s?[\"\']?(http:\/\/)?webmention(.org)?\/?[\"\']?/i', $links, $result ) ) {
+					return self::make_url_absolute( $url, $result[1] );
+				}
+			}
+		}
+
+		// not an (x)html, sgml, or xml page, no use going further
+		if ( preg_match( '#(image|audio|video|model)/#is', wp_remote_retrieve_header( $response, 'content-type' ) ) ) {
+			return false;
+		}
+
+		// now do a GET since we're going to look in the html headers (and we're sure its not a binary file)
+		$response = wp_remote_get( $url, array( 'timeout' => 100, 'httpversion' => '1.0' ) );
+
+		if ( is_wp_error( $response ) ) {
+			return false;
+		}
+
+		$contents = wp_remote_retrieve_body( $response );
+
+		// boost performance and use alreade the header
+		$header = substr( $contents, 0, stripos( $contents, '</head>' ) );
+
+		// unicode to HTML entities
+		$contents = mb_convert_encoding( $contents, 'HTML-ENTITIES', mb_detect_encoding( $contents ) );
+
+		libxml_use_internal_errors( true );
+
+		$doc = new DOMDocument();
+		$doc->loadHTML( $contents );
+
+		$xpath = new DOMXPath( $doc );
+
+		// check <link> elements
+		// checks only head-links
+		foreach ( $xpath->query( '//head/link[contains(concat(" ", @rel, " "), " webmention ") or contains(@rel, "webmention.org")]/@href' ) as $result ) {
+			return self::make_url_absolute( $url, $result->value );
+		}
+
+		// check <a> elements
+		// checks only body>a-links
+		foreach ( $xpath->query( '//body//a[contains(concat(" ", @rel, " "), " webmention ") or contains(@rel, "webmention.org")]/@href' ) as $result ) {
+			return self::make_url_absolute( $url, $result->value );
+		}
+
+		return false;
+	}
+
 
 	/**
 	 * validated a URL that is supposed to be on our site
@@ -741,65 +1209,22 @@ class WP_WEBMENTION_AGAIN {
 	 *
 	 * @return bool|int false on not found, int post_id on found
 	 */
-	public static function validate_local ( $url ) {
+	protected static function validate_local ( $url ) {
 		// normalize url scheme, url_to_postid will take care of it anyway
 		$url = preg_replace( '/^https?:\/\//i', 'http://', $url );
 		return url_to_postid( $url );
 	}
 
 	/**
-	 * debug messages; will only work if WP_DEBUG is on
-	 * or if the level is LOG_ERR, but that will kill the process
+	 * recursive walker for an mf2 array: if it find an element which has a value
+	 * of a single element array, flatten the array to the element
 	 *
-	 * @param string $message
-	 * @param int $level
-	 */
-	public static function debug( $message, $level = LOG_NOTICE ) {
-		if ( @is_array( $message ) || @is_object ( $message ) )
-			$message = json_encode($message);
-
-
-		switch ( $level ) {
-			case LOG_ERR :
-				wp_die( '<h1>Error:</h1>' . '<p>' . $message . '</p>' );
-				exit;
-			default:
-				if ( !defined( 'WP_DEBUG' ) || WP_DEBUG != true )
-					return;
-				break;
-		}
-
-		error_log(  __CLASS__ . ": " . $message );
-	}
-
-	/**
+	 * @param array $mf2 Mf2 array to flatten
+	 *
+	 * @return array flattened Mf2 array
 	 *
 	 */
-	public static function mftypes () {
-		$map = array (
-			 // http://indiewebcamp.com/reply
-			'reply' => 'in-reply-to',
-			// http://indiewebcamp.com/repost
-			'repost' => 'repost-of',
-			// http://indiewebcamp.com/like
-			'like' => 'like-of',
-			// http://indiewebcamp.com/favorite
-			//'' => array ('favorite','',),
-			// http://indiewebcamp.com/bookmark
-			'bookmark' => 'bookmark-of',
-			//  http://indiewebcamp.com/rsvp
-			'rsvp' => 'rsvp',
-			// http://indiewebcamp.com/tag
-			'tag' => 'tag-of',
-		);
-
-		return $map;
-	}
-
-	/**
-	 *
-	 */
-	public static function mf2_unarray ( $mf2 ) {
+	protected static function flatten_mf2_array ( $mf2 ) {
 
 		if (is_array($mf2) && count($mf2) == 1) {
 			$mf2 = array_pop($mf2);
@@ -807,7 +1232,7 @@ class WP_WEBMENTION_AGAIN {
 
 		if (is_array($mf2)) {
 			foreach($mf2 as $key => $value) {
-				$mf2[$key] = static::mf2_unarray($value);
+				$mf2[$key] = static::flatten_mf2_array($value);
 			}
 		}
 
@@ -815,18 +1240,84 @@ class WP_WEBMENTION_AGAIN {
 	}
 
 	/**
+	 * find all urls in a text
+	 *
+	 * @param string $text - text to parse
+	 *
+	 * @return array array of URLS found in the test
+	 */
+	protected static function extract_urls( &$text ) {
+		$matches = array();
+		preg_match_all("/\b(?:http|https)\:\/\/?[a-zA-Z0-9\.\/\?\:@\-_=#]+\.[a-zA-Z0-9\.\/\?\:@\-_=#]*/i", $text, $matches);
+
+		$matches = $matches[0];
+		return $matches;
+	}
+
+	/**
 	 * validates a post object if it really is a post
 	 *
-	 * @param object Wordpress Post Object to check
+	 * @param $post object Wordpress Post Object to check
 	 *
 	 * @return bool true if it's a post, false if not
 	 */
-	public static function is_post ( &$post ) {
+	protected static function is_post ( &$post ) {
 		if ( !empty($post) && is_object($post) && isset($post->ID) && !empty($post->ID) )
 			return true;
 
 		return false;
 	}
+
+
+	/**
+	 * Converts relative to absolute urls
+	 *
+	 * code from [webmention](https://github.com/pfefferle/wordpress-webmention)
+	 * which is based on the code of 99webtools.com
+	 *
+	 * @link http://99webtools.com/relative-path-into-absolute-url.php
+	 *
+	 * @param string $base the base url
+	 * @param string $rel the relative url
+	 *
+	 * @return string the absolute url
+	 */
+	protected static function make_url_absolute( $base, $rel ) {
+		if ( 0 === strpos( $rel, '//' ) ) {
+			return parse_url( $base, PHP_URL_SCHEME ) . ':' . $rel;
+		}
+		// return if already absolute URL
+		if ( parse_url( $rel, PHP_URL_SCHEME ) != '' ) {
+			return $rel;
+		}
+		// queries and	anchors
+		if ( '#' == $rel[0]  || '?' == $rel[0] ) {
+			return $base . $rel;
+		}
+		// parse base URL and convert to local variables:
+		// $scheme, $host, $path
+		extract( parse_url( $base ) );
+		// remove	non-directory element from path
+		$path = preg_replace( '#/[^/]*$#', '', $path );
+		// destroy path if relative url points to root
+		if ( '/' == $rel[0] ) {
+			$path = '';
+		}
+		// dirty absolute URL
+		$abs = "$host";
+		// check port
+		if ( isset( $port ) && ! empty( $port ) ) {
+			$abs .= ":$port";
+		}
+		// add path + rel
+		$abs .= "$path/$rel";
+		// replace '//' or '/./' or '/foo/../' with '/'
+		$re = array( '#(/\.?/)#', '#/(?!\.\.)[^/]+/\.\./#' );
+		for ( $n = 1; $n > 0; $abs = preg_replace( $re, '/', $abs, -1, $n ) ) { }
+		// absolute URL is ready!
+		return $scheme . '://' . $abs;
+	}
+
 
 	/**
 	 * of there is a comment meta 'avatar' field, use that as avatar for the commenter
@@ -837,7 +1328,7 @@ class WP_WEBMENTION_AGAIN {
 	 * @param string $default optional fallback
 	 * @param string $alt alt text for the avatar image
 	 */
-	public static function get_avatar($avatar, $id_or_email, $size, $default = '', $alt = '') {
+	public function get_avatar($avatar, $id_or_email, $size, $default = '', $alt = '') {
 		if (!is_object($id_or_email) || !isset($id_or_email->comment_type))
 			return $avatar;
 
@@ -854,6 +1345,53 @@ class WP_WEBMENTION_AGAIN {
 
 
 		return sprintf( '<img alt="%s" src="%s" class="avatar photo u-photo" style="width: %spx; height: %spx;" />', $safe_alt, $c_avatar, $size, $size );
+	}
+
+	/**
+	 * get content like the_content
+	 *
+	 * @param object $post - WP Post object
+	 *
+	 * @return string the_content
+	 */
+	protected static function get_the_content( &$post ){
+
+		if (!static::is_post($post))
+			return false;
+
+		if ( $cached = wp_cache_get ( $post->ID, __CLASS__ . __FUNCTION__ ) )
+			return $cached;
+
+		$r = apply_filters('the_content', $post->post_content);
+
+		wp_cache_set ( $post->ID, $r, __CLASS__ . __FUNCTION__, static::expire );
+
+		return $r;
+	}
+
+	/**
+	 * debug messages; will only work if WP_DEBUG is on
+	 * or if the level is LOG_ERR, but that will kill the process
+	 *
+	 * @param string $message
+	 * @param int $level
+	 */
+	protected static function debug( $message, $level = LOG_NOTICE ) {
+		if ( @is_array( $message ) || @is_object ( $message ) )
+			$message = json_encode($message);
+
+
+		switch ( $level ) {
+			case LOG_ERR :
+				wp_die( '<h1>Error:</h1>' . '<p>' . $message . '</p>' );
+				exit;
+			default:
+				if ( !defined( 'WP_DEBUG' ) || WP_DEBUG != true )
+					return;
+				break;
+		}
+
+		error_log(  __CLASS__ . ": " . $message );
 	}
 
 }
