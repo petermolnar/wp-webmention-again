@@ -3,7 +3,7 @@
 Plugin Name: wp-webmention-again
 Plugin URI: https://github.com/petermolnar/wp-webmention-again
 Description:
-Version: 0.1
+Version: 0.2
 Author: Peter Molnar <hello@petermolnar.eu>
 Author URI: http://petermolnar.eu/
 License: GPLv3
@@ -15,9 +15,10 @@ if ( ! class_exists( 'WP_Webmention_Again' ) ):
 // global send_webmention function
 if ( ! function_exists( 'send_webmention' ) ) {
 	function send_webmention( $source, $target ) {
-		return WP_Webmention_Again::send( $source, $target );
+		return WP_Webmention_Again::queue_add ( 'out', $source, $target );
 	}
 }
+
 
 // something else might have loaded this already
 if ( ! class_exists( 'Mf2\Parser' ) ) {
@@ -42,6 +43,20 @@ class WP_Webmention_Again {
 	const cron_send = 'webmention_send';
 	// WP cache expiration seconds
 	const expire = 10;
+	//
+	const tablename = 'webmentions';
+
+	/**
+	 * regular cron interval for processing incoming
+	 *
+	 * use 'wp-webmention-again_interval_received' to filter this integer
+	 *
+	 * @return int cron interval in seconds
+	 *
+	 */
+	protected static function known_reacji () {
+		return apply_filters( 'wp-webmention-again_known_reacji', 'reacji' );
+	}
 
 	/**
 	 * regular cron interval for processing incoming
@@ -64,19 +79,7 @@ class WP_Webmention_Again {
 	 *
 	 */
 	protected static function interval_received () {
-		return apply_filters( 'wp-webmention-again_interval_received', 600 );
-	}
-
-	/**
-	 * minimum cron interval for processing incoming
-	 *
-	 * use 'wp-webmention-again_interval_received' to filter this integer
-	 *
-	 * @return int cron interval in seconds
-	 *
-	 */
-	protected static function interval_received_min () {
-		return apply_filters( 'wp-webmention-again_interval_received_min', 60 );
+		return apply_filters( 'wp-webmention-again_interval_received', 90 );
 	}
 
 	/**
@@ -88,20 +91,9 @@ class WP_Webmention_Again {
 	 *
 	 */
 	protected static function interval_send () {
-		return apply_filters( 'wp-webmention-again_interval_send', 600 );
+		return apply_filters( 'wp-webmention-again_interval_send', 90 );
 	}
 
-	/**
-	 * minimum cron interval for processing outgoing
-	 *
-	 * use 'wp-webmention-again_interval_send' to filter this integer
-	 *
-	 * @return int cron interval in seconds
-	 *
-	 */
-	protected static function interval_send_min () {
-		return apply_filters( 'wp-webmention-again_interval_send_min', 60 );
-	}
 	/**
 	 * max number of retries ( both for outgoing and incoming )
 	 *
@@ -219,13 +211,11 @@ class WP_Webmention_Again {
 		// get_pung is not restrictive enough
 		add_filter ( 'get_pung', array( &$this, 'get_pung' ) );
 
-		if ( ! wp_get_schedule( static::cron_received ) ) {
+		if ( ! wp_get_schedule( static::cron_received ) )
 			wp_schedule_event( time(), static::cron_received, static::cron_received );
-		}
 
-		if ( ! wp_get_schedule( static::cron_send ) ) {
+		if ( ! wp_get_schedule( static::cron_send ) )
 			wp_schedule_event( time(), static::cron_send, static::cron_send );
-		}
 
 	}
 
@@ -240,7 +230,43 @@ class WP_Webmention_Again {
 			die( 'The minimum PHP version required for this plugin is 5.3' );
 		}
 
-		flush_rewrite_rules( true );
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		//Use the character set and collation that's configured for WP tables
+		$charset_collate = '';
+
+		if ( !empty($wpdb->charset) ){
+			$charset = str_replace('-', '', $wpdb->charset);
+			$charset_collate = "DEFAULT CHARACTER SET {$charset}";
+		}
+
+		if ( !empty($wpdb->collate) ){
+			$charset_collate .= " COLLATE {$wpdb->collate}";
+		}
+
+		$db_command = "CREATE TABLE IF NOT EXISTS `{$dbname}` (
+			`id` char(160) CHARACTER SET ascii NOT NULL,
+			`date` datetime NOT NULL,
+			`direction` varchar(12) NOT NULL DEFAULT 'in',
+			`tries` int(4) NOT NULL DEFAULT '0',
+			`source` text NOT NULL,
+			`target` text NOT NULL,
+			`object_type` varchar(255) NOT NULL DEFAULT 'post',
+			`object_id` bigint(20) NOT NULL,
+			PRIMARY KEY (`id`),
+			KEY `time` (`date`),
+			KEY `key` (`direction`)
+		) {$charset_collate};";
+
+		static::debug("Initiating DB {$dbname}");
+		try {
+			$wpdb->query( $db_command );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
 	}
 
 	/**
@@ -256,7 +282,18 @@ class WP_Webmention_Again {
 		wp_unschedule_event( time(), static::cron_send );
 		wp_clear_scheduled_hook( static::cron_send );
 
-		flush_rewrite_rules( true );
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$db_command = "DROP TABLE IF EXISTS `{$dbname}`;";
+
+		static::debug("Deleting DB {$dbname}");
+		try {
+			$wpdb->query( $db_command );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
 	}
 
 
@@ -350,13 +387,16 @@ class WP_Webmention_Again {
 	 *
 	 * @param char $reacji single emoticon character to add as comment type
 	 *
-	 */
+	 *
 	public static function register_reacji ( $reacji ) {
-		$options = static::get_options();
+		$known_reacji = get_option( static::known_reacji() );
 
-		if ( ! in_array( $reacji, $options['comment_types'] ) ) {
-			$options['comment_types'][ $reacji ] = $reacji;
-			update_option( __CLASS__ , $options );
+		if (!is_array($known_reacji))
+			$known_reacji = array();
+
+		if ( ! in_array( $reacji, $known_reacji ) ) {
+			array_push( $known_reacji, $reacji );
+			update_option( static::known_reacji() , $options );
 		}
 
 	}
@@ -397,6 +437,172 @@ class WP_Webmention_Again {
 		return $types;
 	}
 
+	/**
+	 * insert a webmention to the queue
+	 *
+	 * @param string $direction - 'in' or 'out'
+	 * @param string $source - source URL
+	 * @param string $target - target URL
+	 * @param string $object - object type: post, comment, etc.
+	 * @param int $object_id - ID of object
+	 *
+	 * @return false|string - false on failure, inserted ID on success
+	 *
+	 */
+	public static function queue_add ( $direction, $source, $target, $object = '', $object_id = 0 ) {
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$direction = strtolower($direction);
+		$valid_directions = array ( 'in', 'out' );
+		if ( ! in_array ( $direction, $valid_directions ) )
+			return false;
+
+		$id = sha1($source . $target);
+
+		if ( static::queue_exists ( $direction, $source, $target ) )
+			return true;
+
+		$q = $wpdb->prepare( "INSERT INTO `{$dbname}`
+			(`id`,`date`,`direction`, `tries`,`source`, `target`, `object_type`, `object_id`) VALUES
+			( '%s', NOW(), '%s', 0, '%s', '%s', '%s', %d );",
+			$id, $direction, $source, $target, $object, $object_id );
+
+		try {
+			$req = $wpdb->query( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		return $id;
+	}
+
+	/**
+	 * increment tries counter for a queue element
+	 *
+	 * @param string $id - ID of queue element
+	 *
+	 * @return bool - query success/failure
+	 *
+	 */
+	public static function queue_inc ( $id ) {
+
+		if ( empty( $id ) )
+			return false;
+
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$q = $wpdb->prepare( "UPDATE `{$dbname}` SET `tries` = `tries` + 1 WHERE `id` = '%s'; ", $id );
+
+		try {
+			$req = $wpdb->query( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		return $req;
+	}
+
+	/**
+	 * delete an entry from the webmentions queue
+	 *
+	 * @param string $id - ID of webmention queue element
+	 *
+	 * @return bool - query success/failure
+	 *
+	 */
+	public static function queue_del ( $id ) {
+
+		if ( empty( $id ) )
+			return false;
+
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$q = $wpdb->prepare( "DELETE FROM `{$dbname}` WHERE `id` = '%s' LIMIT 1;", $id );
+
+		try {
+			$req = $wpdb->query( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		return $req;
+	}
+
+	/**
+	 * get a batch of elements according to direction
+	 *
+	 * @param string $direction - 'in' or 'out'
+	 * @param int $limit - max number of items to get
+	 *
+	 * @return array of queue objects
+	 *
+	 */
+	public static function queue_get ( $direction, $limit = 1 ) {
+
+		$direction = strtolower($direction);
+		$valid_directions = array ( 'in', 'out' );
+		if ( ! in_array ( $direction, $valid_directions ) )
+			return false;
+
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$q = $wpdb->prepare( "SELECT * FROM `{$dbname}` WHERE `direction` = '%s' LIMIT %d;", $direction, $limit );
+
+		try {
+			$req = $wpdb->get_results( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		if ( ! empty ( $req ) )
+			return $req;
+
+		return false;
+	}
+
+	/**
+	 * checks existence of a queue element
+	 *
+	 * @param string $direction - 'in' or 'out'
+	 * @param string $source - source URL
+	 * @param string $target - target URL
+	 *
+	 * @return bool true on existing element, false on not found
+	 */
+	public static function queue_exists ( $direction, $source, $target ) {
+
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$direction = strtolower($direction);
+		$valid_directions = array ( 'in', 'out' );
+		if ( ! in_array ( $direction, $valid_directions ) )
+			return false;
+
+		$id = sha1($source . $target);
+
+		$q = $wpdb->prepare( "SELECT date FROM `{$dbname}` WHERE `direction` = '%s' and `id` = '%s';", $direction, $id );
+
+		try {
+			$req = $wpdb->get_results( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage());
+		}
+
+		if ( ! empty ( $req ) )
+			return true;
+
+		return false;
+	}
 
 	/**
 	 * parse & queue incoming webmention endpoint requests
@@ -458,7 +664,8 @@ class WP_Webmention_Again {
 		}
 
 		// queue here, the remote check will be async
-		$r = static::queue_receive( $source, $target, $post_id );
+		//$r = static::queue_receive( $source, $target, $post_id );
+		$r = static::queue_add( 'in', $source, $target, 'post', $post_id );
 
 		if ( true == $r ) {
 			status_header( 202 );
@@ -473,148 +680,79 @@ class WP_Webmention_Again {
 	}
 
 	/**
-	 * add post meta for post with about incoming webmention request to be
-	 * processed later
-	 *
-	 * @param string $source source URL
-	 * @param string $target target URL
-	 * @param int $post_id Post ID
-	 *
-	 * @return bool|int result of add_post_meta
-	 */
-	protected static function queue_receive ( $source, $target, $post_id ) {
-		if( empty( $post_id ) || empty( $source ) || empty( $target ) )
-			return false;
-
-		$val = array (
-			'source' => $source,
-			'target' => $target
-		);
-
-		static::debug( "queueing {static::meta_received} meta for #{$post_id}; source: {$source}, target: {$target}" );
-
-		$r = add_post_meta( $post_id, static::meta_received, $val, false );
-
-		if ( false == $r ) {
-			static::debug( "adding {static::meta_received} meta for #{$post_id} failed" );
-		}
-		else {
-			// fire up a single cron event if the scheduled is too far in the future
-			if ( wp_next_scheduled( static::cron_received ) > static::interval_received_min() )
-				wp_schedule_single_event( time() , static::cron_received );
-		}
-
-		return $r;
-	}
-
-
-	/**
 	 * worker method for doing received webmentions
 	 * triggered by cron
 	 *
 	 */
 	public function process_received () {
 
-		$posts = static::get_received();
+		$incoming = static::queue_get ( 'in', static::per_batch() );
 
-		if ( empty( $posts ) )
+		if ( empty( $incoming ) )
 			return true;
 
-		foreach ( $posts as $post_id ) {
+		foreach ( (array)$incoming as $received ) {
 
-			$received_mentions = get_post_meta ( $post_id, static::meta_received, false );
-
-			foreach ( $received_mentions as $m ) {
-				// $m should not be modified as this is how the current entry can be identified!
-				$_m = $m;
-
-				static::debug( "working on webmention for post #{$post_id}" );
-
-				// this really should not happen, but if it does, get rid of this entry immediately
-				if (! isset( $_m['target'] ) ||
-						  empty( $_m['target'] ) ||
-						! isset( $_m['source'] ) ||
-						  empty( $_m['source'] )
-				) {
+			// this really should not happen, but if it does, get rid of this entry immediately
+			if (! isset( $received->target ) ||
+					  empty( $received->target ) ||
+					! isset( $received->source ) ||
+					  empty( $received->source )
+			) {
 					static::debug( "  target or souce empty, aborting" );
+					static::queue_del ( $received->id );
 					continue;
 				}
 
-				static::debug( "  target: {$_m['target']}, source: {$_m['source']}" );
+			static::debug( "processing webmention:  target -> {$received->target}, source -> {$received->source}" );
 
-				// if we'be been here before, we have retried counter already
-				$retries = isset( $_m['retries'] ) ? intval( $_m['retries'] ) : 0;
+			if ( empty( $received->object_id ) || 0 == $received->object_id )
+				$post_id = url_to_postid ( $received->target );
+			else
+				$post_id = $received->object_id;
+			$post = get_post ( $post_id );
 
-				// too many retries, drop this mention and walk away
-				if ( $retries >= static::retry() ) {
-					static::debug( "  this mention was tried earlier and failed too many times, drop it" );
-					delete_post_meta( $post_id, static::meta_received, $m );
-					continue;
-				}
+			if ( ! static::is_post( $post ) ) {
+				static::debug( "  no post found for this mention, try again later, who knows?" );
+				//static::queue_del ( $received->id );
+				continue;
+			}
 
-				$_m['retries'] = $retries + 1;
+			// too many retries, drop this mention and walk away
+			if ( $received->tries >= static::retry() ) {
+				static::debug( "  this mention was tried earlier and failed too many times, drop it" );
+				static::queue_del ( $received->id );
+				continue;
+			}
 
-				// validate target
-				$remote = static::try_receive_remote( $post_id, $_m['source'], $_m['target'] );
+			// increment retries
+			static::queue_inc ( $received->id );
 
-				if ( false === $remote || empty( $remote ) ) {
-					static::debug( "  parsing this mention failed, retrying next time" );
-					update_post_meta( $post_id, static::meta_received, $_m, $m );
-					continue;
-				}
+			// validate target
+			$remote = static::try_receive_remote( $post_id, $received->source, $received->target );
 
-				// we have remote data !
-				$c = static::try_parse_remote ( $post_id, $_m['source'], $_m['target'], $remote );
-				$ins = static::insert_comment ( $post_id, $_m['source'], $_m['target'], $remote, $c );
+			if ( false === $remote || empty( $remote ) ) {
+				static::debug( "  parsing this mention failed, retrying next time" );
+				continue;
+			}
 
-				if ( true === $ins ) {
-					static::debug( "  duplicate (or something similar): this queue element has to be ignored; deleting queue entry" );
-					delete_post_meta( $post_id, static::meta_received, $m );
-				}
-				elseif ( is_numeric( $ins ) ) {
-					static::debug( "  all went well, we have a comment id: {$ins}, deleting queue entry" );
-					delete_post_meta( $post_id, static::meta_received, $m );
-				}
-				else {
-					static::debug( "This is unexpected. Try again." );
-					update_post_meta( $post_id, static::meta_received, $_m, $m );
-					continue;
-				}
+			// we have remote data !
+			$c = static::try_parse_remote ( $post_id, $received->source, $received->target, $remote );
+			$ins = static::insert_comment ( $post_id, $received->source, $received->target, $remote, $c );
+
+			if ( true === $ins ) {
+				static::debug( "  duplicate (or something similar): this queue element has to be ignored; deleting queue entry" );
+					static::queue_del ( $received->id );
+			}
+			elseif ( is_numeric( $ins ) ) {
+				static::debug( "  all went well, we have a comment id: {$ins}, deleting queue entry" );
+				static::queue_del ( $received->id );
+			}
+			else {
+				static::debug( "This is unexpected. Try again." );
 			}
 		}
 	}
-
-	/**
-	 * get posts which have queued incoming requests
-	 *
-	 * @return array array of WP Post objects or empty array
-	 */
-	protected static function get_received () {
-
-		global $wpdb;
-		$r = array();
-
-		$dbname = "{$wpdb->prefix}postmeta";
-		$key = static::meta_received;
-		$limit = static::per_batch();
-		$db_command = "SELECT DISTINCT `post_id` FROM `{$dbname}` WHERE `meta_key` = '{$key}' LIMIT {$limit}";
-
-		try {
-			$q = $wpdb->get_results( $db_command );
-		}
-		catch ( Exception $e ) {
-			static::debug( "Something went wrong: " . $e->getMessage() );
-		}
-
-		if ( ! empty( $q ) && is_array( $q ) ) {
-			foreach ( $q as $post ) {
-				array_push( $r, $post->post_id );
-			}
-		}
-
-		return $r;
-	}
-
 
 	/**
 	 * extended wp_remote_get with debugging
@@ -649,6 +787,8 @@ class WP_Webmention_Again {
 			return false;
 		}
 
+		static::debug('Headers: ' . json_encode($q['headers']));
+
 		return $q;
 	}
 
@@ -670,14 +810,28 @@ class WP_Webmention_Again {
 		if ( false === $q )
 			return false;
 
-		$t = $target;
-		$t = preg_replace( '/https?:\/\/(?:www.)?/', '', $t );
-		$t = preg_replace( '/#.*/', '', $t );
-		$t = untrailingslashit( $t );
+		$targets = array (
+			$target,
+			wp_get_shortlink( $post_id ),
+			get_permalink( $post_id )
+		);
+
+		$found = false;
+
+		foreach ( $targets as $k => $t ) {
+			$t = preg_replace( '/https?:\/\/(?:www.)?/', '', $t );
+			$t = preg_replace( '/#.*/', '', $t );
+			$t = untrailingslashit( $t );
+			//$targets[ $k ] = $t;
+
+			if ( ! stristr( $q['body'], $t ) )
+				$found = true;
+
+		}
 
 		// check if source really links to target
 		// this could be a temporary error, so we'll retry later this one as well
-		if ( ! stristr( $q['body'], $t ) ) {
+		if ( false == $found ) {
 			static::debug( "    missing link to {$t} in remote body" );
 			return false;
 		}
@@ -729,13 +883,21 @@ class WP_Webmention_Again {
 		elseif ( is_array($content['items'] ) && ! empty( $content['items']['type'] ) ) {
 			foreach ( $content['items'] as $i ) {
 				if ( 'h-entry' == $i['type'] ) {
-					$item = $i;
+					$items[] = $i;
 				}
 				elseif ( 'h-card' == $i['type'] ) {
 					$p_authors[] = $i;
 				}
+				elseif ( 'u-comment' == $i['type'] ) {
+					$comments[] = $i;
+				}
 			}
 		}
+
+		if ( ! empty ( $items ) )
+			$item = array_pop( $items );
+		elseif ( empty( $items ) && ! empty( $comments ) )
+			$item = array_pop( $comments );
 
 		if (! $item || empty( $item )) {
 			static::debug('    no parseable h-entry found, saving as standard mention comment');
@@ -803,8 +965,8 @@ class WP_Webmention_Again {
 
 		if ( $emoji ) {
 			static::debug( "wheeeee, reacji!" );
-			$type = trim( $c );
-			static::register_reacji( $type );
+			$type = 'reacji';
+			//static::register_reacji( $type );
 		}
 
 		// process date
@@ -953,7 +1115,7 @@ class WP_Webmention_Again {
 	 * @param string $new_status New post status
 	 * @param string $old_status Previous post status
 	 * @param object $post WP Post object
-	 */
+	 *
 	public function queue_send( $new_status, $old_status, $post ) {
 		if ( ! static::is_post( $post ) ) {
 			static::debug( "Whoops, this is not a post." );
@@ -970,103 +1132,124 @@ class WP_Webmention_Again {
 		if ( ! $r ) {
 			static::debug( "Tried adding post #{$post->ID} to mention queue, but it didn't go well" );
 		}
-		else {
-			// fire up a single cron event if the scheduled is too far in the future
-			if ( wp_next_scheduled( static::cron_send ) > static::interval_send_min() )
-				wp_schedule_single_event( time() , static::cron_send );
-		}
+		//else {
+			//// fire up a single cron event if the scheduled is too far in the future
+			//$next = wp_next_scheduled( static::cron_send ) - time ();
+			//if ( $next > static::interval_send_min() )
+				//wp_schedule_single_event( time() , static::cron_send );
+		//}
 
 		return $r;
 	}
+	*/
 
 	/**
-	 * Main send processor
+	 * triggered on post transition, applied when new status is publish, therefore
+	 * applied on edit of published posts as well
+	 * add a post meta to the post to be processed by the send processor
 	 *
+	 * @param string $new_status New post status
+	 * @param string $old_status Previous post status
+	 * @param object $post WP Post object
+	 */
+	public function queue_send( $new_status, $old_status, $post ) {
+
+		if ( ! static::is_post( $post ) ) {
+			static::debug( "Whoops, this is not a post." );
+			return false;
+		}
+
+		if ( 'publish' != $new_status ) {
+			static::debug( "Not adding {$post->ID} to mention queue yet; not published" );
+			return false;
+		}
+
+		static::debug("Trying to get urls for #{$post->ID}");
+
+		// try to avoid redirects, so no shortlink is sent for now as source
+		$source = get_permalink( $post->ID );
+
+		// process the content as if it was the_content()
+		$content = static::get_the_content( $post );
+
+		// get all urls in content
+		$urls = static::extract_urls( $content );
+
+		// for special ocasions when someone wants to add to this list
+		$urls = apply_filters( 'webmention_links', $urls, $post->ID );
+
+		// lowercase url is good for your mental health
+		foreach ( $urls as $k => $url )
+			$urls[ $k ] = strtolower( $url );
+
+		// remove all already pinged urls
+		$pung = get_pung( $post->ID );
+		$urls = array_diff ( $urls, $pung );
+
+		foreach ( $urls as $target ) {
+			$r = static::queue_add ( 'out', $source, $target, $post->post_type, $post->ID );
+
+			if ( !$r )
+				static::debug( "  tried adding post #{$post->ID}, url: {$target} to mention queue, but it didn't go well" );
+		}
+
+	}
+
+	/**
+	 * worker method for doing received webmentions
+	 * triggered by cron
 	 *
 	 */
 	public function process_send () {
-		$posts = static::get_send();
 
-		if ( empty( $posts ) )
-			return false;
+		$outgoing = static::queue_get ( 'out', static::per_batch() );
 
-		foreach ( $posts as $post_id ) {
-			$post = get_post( $post_id );
+		if ( empty( $outgoing ) )
+			return true;
 
-			if ( ! static::is_post( $post ) ) {
-				delete_post_meta( $post_id, static::meta_send );
+		foreach ( (array)$outgoing as $send ) {
+
+			// this really should not happen, but if it does, get rid of this entry immediately
+			if (! isset( $send->target ) ||
+					  empty( $send->target ) ||
+					! isset( $send->source ) ||
+					  empty( $send->source )
+			) {
+					static::debug( "  target or souce empty, aborting" );
+					static::queue_del ( $send->id );
+					continue;
+				}
+
+			static::debug( "processing webmention:  target -> {$send->target}, source -> {$send->source}" );
+
+			// too many retries, drop this mention and walk away
+			if ( $send->tries >= static::retry() ) {
+				static::debug( "  this mention was tried earlier and failed too many times, drop it" );
+				static::queue_del ( $send->id );
 				continue;
 			}
 
-			static::debug("Trying to get urls for #{$post->ID}");
+			// increment retries
+			static::queue_inc ( $send->id );
 
-			// try to avoid redirects, so no shortlink is sent for now
-			$source = get_permalink( $post->ID );
+			// try sending
+			$s = static::send( $send->source, $send->target );
 
-			// process the content as if it was the_content()
-			$content = static::get_the_content( $post );
-
-			// get all urls in content
-			$urls = static::extract_urls( $content );
-
-			// for special ocasions when someone wants to add to this list
-			$urls = apply_filters( 'webmention_links', $urls, $post->ID );
-
-			$todo = $urls;
-			$failed = array();
-			$pung = get_pung( $post->ID );
-
-			foreach ( $urls as $target ) {
-				$target = strtolower( $target );
-				static::debug('  url to ping: ' . $target );
-
-				// already pinged, skip
-				if ( in_array( $target, $pung ) ) {
-					static::debug( "    already pinged!" );
-					$todo = array_diff( $todo, array( $target ) );
-					continue;
-				}
-
-				// tried too many times
-				$try_key = static::meta_send . '_' . $target;
-				$tries = intval( get_post_meta( $post->ID, $try_key, true ) );
-
-				if ( false != $tries && $tries >= static::retry() ) {
-					static::debug( "    failed too many times; skipping" );
-					$todo = array_diff( $todo, array( $target ) );
-					array_push( $failed, $try_key );
-					continue;
-				}
-
-				// try sending
-				$s = static::send( $source, $target, $post->ID );
-
-				if ( !$s ) {
-					$tries = $tries + 1;
+			if ( !$s ) {
 					static::debug( "    sending failed; retrying later ({$tries} time)" );
-					update_post_meta( $post->ID, $try_key, $tries );
-					continue;
-				}
-				else {
-					static::debug( "  sending succeeded!" );
-					add_ping( $post->ID, $target );
-					$todo = array_diff( $todo, array( $target ) );
-				}
-
 			}
+			else {
+				static::debug( "  sending succeeded!" );
 
-			if ( empty( $todo ) ) {
-				static::debug( "  no more urls to ping or no more tries left, cleaning up" );
+				$post_types = get_post_types( '', 'names' );
+				if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id )
+					add_ping( $send->object_id, $send->target );
 
-				foreach ( $failed as $try_key )
-					delete_post_meta( $post->ID, $try_key );
-
-				delete_post_meta( $post->ID, static::meta_send );
-
+				static::queue_del ( $send->id );
 			}
-
 		}
 	}
+
 
 	/**
 	 * make pung stricter
