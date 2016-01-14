@@ -4,7 +4,7 @@ Donate link: https://paypal.me/petermolnar/3
 Tags: webmention, pingback, indieweb
 Requires at least: 4.3
 Tested up to: 4.4.1
-Stable tag: 0.2
+Stable tag: 0.3
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
 Required minimum PHP version: 5.3
@@ -32,6 +32,12 @@ Version numbering logic:
 * every A. indicates BIG changes.
 * every .B version indicates new features.
 * every ..C indicates bugfixes for A.B version.
+
+= 0.3 =
+*2016-01-14*
+
+* split into 3 files: base, sender & receiver for readability
+
 
 = 0.2 =
 *2016-01-13*
