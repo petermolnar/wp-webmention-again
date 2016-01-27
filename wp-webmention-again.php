@@ -42,6 +42,36 @@ class WP_Webmention_Again {
 		return apply_filters( 'wp-webmention-again_remote_timeout', 100 );
 	}
 
+
+	/**
+	 * mapping for comment types -> mf2 names
+	 *
+	 * use 'wp-webmention-again_mftypes' to filter this array
+	 *
+	 * @return array array of comment_type => mf2_name entries
+	 *
+	 */
+	protected static function mftypes () {
+		$map = array (
+			 // http://indiewebcamp.com/reply
+			'reply' => 'in-reply-to',
+			// http://indiewebcamp.com/repost
+			'repost' => 'repost-of',
+			// http://indiewebcamp.com/like
+			'like' => 'like-of',
+			// http://indiewebcamp.com/favorite
+			'favorite' => 'favorite-of',
+			// http://indiewebcamp.com/bookmark
+			'bookmark' => 'bookmark-of',
+			//  http://indiewebcamp.com/rsvp
+			'rsvp' => 'rsvp',
+			// http://indiewebcamp.com/tag
+			'tag' => 'tag-of',
+		);
+
+		return apply_filters( 'wp-webmention-again_mftypes', $map );
+	}
+
 	/**
 	 * runs on plugin load
 	 */
@@ -293,7 +323,7 @@ class WP_Webmention_Again {
 		if ( empty( $note ) )
 			$q = $wpdb->prepare( "UPDATE `{$dbname}` SET `status` = 1 WHERE `id` = '%s'; ", $id );
 		else
-			$q = $wpdb->prepare( "UPDATE `{$dbname}` SET `status` = 1, `note`='%s' WHERE `id` = '%s'; ", $id, $node );
+			$q = $wpdb->prepare( "UPDATE `{$dbname}` SET `status` = 1, `note`='%s' WHERE `id` = '%s'; ", $note, $id );
 
 		try {
 			$req = $wpdb->query( $q );

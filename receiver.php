@@ -26,7 +26,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	 *
 	 */
 	protected static function per_batch () {
-		return apply_filters( 'wp-webmention-again-receiver_per_batch', 10 );
+		return apply_filters( 'wp-webmention-again-receiver_per_batch', 42 );
 	}
 
 	/**
@@ -63,35 +63,6 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	 */
 	protected static function endpoint() {
 		return apply_filters( 'wp-webmention-again-receiver_endpoint', 'webmention' );
-	}
-
-	/**
-	 * mapping for comment types -> mf2 names
-	 *
-	 * use 'wp-webmention-again_mftypes' to filter this array
-	 *
-	 * @return array array of comment_type => mf2_name entries
-	 *
-	 */
-	protected static function mftypes () {
-		$map = array (
-			 // http://indiewebcamp.com/reply
-			'reply' => 'in-reply-to',
-			// http://indiewebcamp.com/repost
-			'repost' => 'repost-of',
-			// http://indiewebcamp.com/like
-			'like' => 'like-of',
-			// http://indiewebcamp.com/favorite
-			'favorite' => 'favorite-of',
-			// http://indiewebcamp.com/bookmark
-			'bookmark' => 'bookmark-of',
-			//  http://indiewebcamp.com/rsvp
-			'rsvp' => 'rsvp',
-			// http://indiewebcamp.com/tag
-			'tag' => 'tag-of',
-		);
-
-		return apply_filters( 'wp-webmention-again_mftypes', $map );
 	}
 
 	public function __construct() {
@@ -498,8 +469,9 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			return $c;
 		}
 
+		$author_url = $source;
 		// process author
-		$author_name = $author_url = $avatar = $a = false;
+		$author_name = $avatar = $a = false;
 
 		if ( isset( $item['properties']['author'] ) ) {
 			$a = $item['properties']['author'];
@@ -525,6 +497,9 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 					}
 				}
 			}
+
+			if ( isset($a['url']) && ! empty( $a['url'] ) )
+				$author_url = $a['url'];
 		}
 
 		// process type
@@ -540,7 +515,9 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['html'] ) )
 			$c = $item['properties']['content']['html'];
 		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['value'] ) )
-			$c = wp_filter_kses( $item['properties']['content']['value'] );
+			$c = $item['properties']['content']['value'];
+
+		$c = wp_filter_kses ( $c );
 
 		// REACJI
 		$emoji = EmojiRecognizer::isSingleEmoji( $c );
@@ -563,8 +540,8 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		$c = array (
 			'comment_author'				=> $name,
-			'comment_author_url'		=> $source,
-			'comment_author_email'	=> '',
+			'comment_author_url'		=> $author_url,
+			'comment_author_email'	=> static::try_get_author_email ( $author_url ),
 			'comment_post_ID'				=> $post_id,
 			'comment_type'					=> $type,
 			'comment_date'					=> date( "Y-m-d H:i:s", $date ),
@@ -667,8 +644,8 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			// full raw response for the vote, just in case
 			update_comment_meta( $comment_id, 'webmention_source_mf2', $raw );
 
-			// original request
-			update_comment_meta( $comment_id, 'webmention_original', array( 'target' => $target, 'source' => $source) );
+			update_comment_meta( $comment_id, 'webmention_source', $source );
+			update_comment_meta( $comment_id, 'webmention_target', $target );
 
 			// info
 			$r = "new comment inserted for {$post_id} as #{$comment_id}";
@@ -713,6 +690,19 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			$safe_alt = esc_attr( $alt );
 
 		return sprintf( '<img alt="%s" src="%s" class="avatar photo u-photo" style="width: %dpx; height: %dpx;" />', $safe_alt, $c_avatar, $size, $size );
+	}
+
+	/**
+	 *
+	 *
+	 */
+	public static function try_get_author_email ( $author_url ) {
+		$mail = '';
+
+		if ( stristr ( $author_url, 'facebook' ) )
+			$mail = parse_url ( rtrim ( $author_url, '/'), PHP_URL_PATH ) . '@facebook.com';
+
+		return $mail;
 	}
 
 }

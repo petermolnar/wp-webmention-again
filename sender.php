@@ -26,7 +26,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 	 *
 	 */
 	protected static function per_batch () {
-		return apply_filters( 'wp-webmention-again-sender_per_batch', 10 );
+		return apply_filters( 'wp-webmention-again-sender_per_batch', 42 );
 	}
 
 	/**
@@ -146,6 +146,14 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		$urls = array_diff ( $urls, $pung );
 
 		foreach ( $urls as $target ) {
+
+			$s_domain = parse_url( $source, PHP_URL_HOST);
+			$t_domain = parse_url( $target, PHP_URL_HOST);
+
+			// skip self-pings
+			if ( $s_domain == $t_domain )
+				continue;
+
 			$r = static::queue_add ( 'out', $source, $target, $post->post_type, $post->ID );
 
 			if ( !$r )
@@ -184,7 +192,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			// too many retries, drop this mention and walk away
 			if ( $send->tries >= static::retry() ) {
 				static::debug( "  this mention was tried earlier and failed too many times, drop it" );
-				static::queue_del ( $send->id );
+				static::queue_done ( $send->id );
 				continue;
 			}
 
