@@ -57,7 +57,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		add_action( static::cron, array( &$this, 'process' ) );
 
 		// register new posts
-		add_action( 'transition_post_status', array( &$this, 'queue' ), 12, 5 );
+		add_action( 'transition_post_status', array( &$this, 'queue' ), 98, 5 );
 
 	}
 
@@ -111,7 +111,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 	 * @param string $old_status Previous post status
 	 * @param object $post WP Post object
 	 */
-	public function queue( $new_status, $old_status, $post ) {
+	public static function queue( $new_status, $old_status, $post ) {
 
 		if ( ! static::is_post( $post ) ) {
 			static::debug( "Whoops, this is not a post." );
