@@ -242,7 +242,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		if (! $post_id || 0 == $post_id ) {
 			status_header( 404 );
-			echo '"target" not found.';
+			echo '"target" POST not found.';
 			exit;
 		}
 
@@ -355,7 +355,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	 * @return bool|array false on error; plain array or Mf2 parsed (and
 	 *   flattened ) array of remote content on success
 	 */
-	protected static function try_receive_remote ( &$post_id, &$source, &$target ) {
+	protected static function try_receive_remote ( $post_id, $source, $target ) {
 
 		$content = false;
 		$q = static::_wp_remote_get( $source );
@@ -425,10 +425,26 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	 *
 	 * @return bool|int false on error; insterted comment ID on success
 	 */
-	protected static function try_parse_remote ( &$post_id, &$source, &$target, &$content ) {
+	protected static function try_parse_remote ( $post_id, $source, $target, $content ) {
 
+		// default
+		$c = array (
+			'comment_author'				=> $source,
+			'comment_author_url'		=> $source,
+			'comment_author_email'	=> '',
+			'comment_post_ID'				=> $post_id,
+			'comment_type'					=> 'webmention',
+			'comment_date'					=> date("Y-m-d H:i:s"),
+			'comment_date_gmt'			=> date("Y-m-d H:i:s"),
+			'comment_agent'					=> __CLASS__,
+			'comment_approved' 			=> 0,
+			'comment_content'				=> sprintf( __( 'This entry was webmentioned on <a href="%s">%s</a>.' ), $source, $source ),
+			'comment_meta'					=> array(),
+		);
+
+		// try to find the actual entry
 		$item = false;
-		$p_authors = array();
+		$p_authors = $items = $comments = array();
 
 		if ( isset( $content['items']['properties'] ) && isset( $content['items']['type'] ) ) {
 			$item = $content['items'];
@@ -452,27 +468,20 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		elseif ( empty( $items ) && ! empty( $comments ) )
 			$item = array_pop( $comments );
 
+
+		// if the entry wasn't found, fall back to a regular mention
 		if (! $item || empty( $item )) {
 			static::debug('    no parseable h-entry found, saving as standard mention comment');
-			$c = array (
-				'comment_author'				=> $source,
-				'comment_author_url'		=> $source,
-				'comment_author_email'	=> '',
-				'comment_post_ID'				=> $post_id,
-				'comment_type'					=> 'webmention',
-				'comment_date'					=> date("Y-m-d H:i:s"),
-				'comment_date_gmt'			=> date("Y-m-d H:i:s"),
-				'comment_agent'					=> __CLASS__,
-				'comment_approved' 			=> 0,
-				'comment_content'				=> sprintf( __( 'This entry was webmentioned on <a href="%s">%s</a>.' ), $source, $source ),
-			);
 			return $c;
 		}
 
-		$author_url = $source;
-		// process author
-		$author_name = $avatar = $a = false;
+		// otherwise start parsing
 
+		// get real source if set
+		if ( isset ( $item['properties']['url'] ) && !empty( $item['properties']['url'] ) )
+			$c['comment_meta']['comment_url'] = ( is_array ( $item['properties']['url'] ) ) ? array_pop ( $item['properties']['url'] ) :  $item['properties']['url'];
+
+		// try to get author
 		if ( isset( $item['properties']['author'] ) ) {
 			$a = $item['properties']['author'];
 		}
@@ -480,77 +489,63 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			$a = array_pop( $p_authors );
 		}
 
+		// try to process author
 		if ( $a && isset( $a['properties'] ) ) {
 			$a = $a['properties'];
 
+			// author name
 			if ( isset($a['name']) && ! empty( $a['name'] ) )
-				$author_name = $a['name'];
+				$c['comment_author'] = $a['name'];
 
+			// avatar
 			$try_photos = array ('photo', 'avatar');
 			$p = false;
 			foreach ( $try_photos as $photo ) {
 				if (isset( $a[ $photo ]) && ! empty( $a[ $photo ] ) ) {
 					$p = $a[ $photo ];
 					if ( !empty( $p ) ) {
-						$avatar = $p;
+						$c['comment_meta']['avatar'] = $p;
 						break;
 					}
 				}
 			}
 
-			if ( isset($a['url']) && ! empty( $a['url'] ) )
-				$author_url = $a['url'];
-		}
+			// author url & author email
+			if ( isset($a['url']) && ! empty( $a['url'] ) ) {
+				if ( is_array ($a['url']) )
+					$c['comment_author_url'] = array_pop ( $a['url'] );
+				else
+					$c['comment_author_url'] = $a['url'];
 
-		// process type
-		$type = 'webmention';
+				$c['comment_author_email'] = static::try_get_author_email ( $c['comment_author_url'] );
+			}
+		}
 
 		foreach ( static::mftypes() as $k => $mapped ) {
 			if ( is_array( $item['properties'] ) && isset( $item['properties'][ $mapped ]) )
-				$type = $k;
+				$c['comment_type'] = $k;
 		}
 
 		//process content
-		$c = '';
+		$content = '';
 		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['html'] ) )
-			$c = $item['properties']['content']['html'];
+			$content = $item['properties']['content']['html'];
 		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['value'] ) )
-			$c = $item['properties']['content']['value'];
+			$content = $item['properties']['content']['value'];
 
-		$c = wp_filter_kses ( $c );
+		$c['comment_content'] = wp_filter_kses ( $content );
 
 		// REACJI
-		$emoji = EmojiRecognizer::isSingleEmoji( $c );
+		$emoji = EmojiRecognizer::isSingleEmoji( $content );
 
-		if ( $emoji ) {
-			static::debug( "wheeeee, reacji!" );
-			$type = 'reacji';
-			//static::register_reacji( $type );
-		}
+		if ( $emoji )
+			$c['comment_type'] = 'reacji';
 
 		// process date
 		if ( isset( $item['properties']['modified'] ) )
-			$date = strtotime( $item['properties']['modified'] );
+			$c['comment_date'] = date( "Y-m-d H:i:s", strtotime( $item['properties']['modified'] ));
 		elseif ( isset( $item['properties']['published'] ) )
-			$date = strtotime( $item['properties']['published'] );
-		else
-			$date = time();
-
-		$name = empty( $author_name ) ? $source : $author_name;
-
-		$c = array (
-			'comment_author'				=> $name,
-			'comment_author_url'		=> $author_url,
-			'comment_author_email'	=> static::try_get_author_email ( $author_url ),
-			'comment_post_ID'				=> $post_id,
-			'comment_type'					=> $type,
-			'comment_date'					=> date( "Y-m-d H:i:s", $date ),
-			'comment_date_gmt'			=> date( "Y-m-d H:i:s", $date ),
-			'comment_agent'					=> __CLASS__,
-			'comment_approved' 			=> 0,
-			'comment_content'				=> $c,
-			'comment_avatar'				=> $avatar,
-		);
+			$c['comment_date'] = date( "Y-m-d H:i:s", strtotime( $item['properties']['published'] ));
 
 		return $c;
 	}
@@ -558,21 +553,23 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	/**
 	 * Comment inserter
 	 *
-	 * @param string &$post_id post ID
-	 * @param string &$source Originator URL
-	 * @param string &$target Target URL
-	 * @param mixed &$raw Raw format of the comment, like JSON response from the provider
-	 * @param array &$comment array formatted to match a WP Comment requirement
+	 * @param string $post_id post ID
+	 * @param string $source Originator URL
+	 * @param string $target Target URL
+	 * @param mixed $raw Raw format of the comment, like JSON response from the provider
+	 * @param array $comment array formatted to match a WP Comment requirement
 	 *
 	 */
-	protected static function insert_comment ( &$post_id, &$source, &$target, &$raw, &$comment ) {
+	protected static function insert_comment ( $post_id, $source, $target, $raw, $comment ) {
+
+		$comment = apply_filters ( 'wp_webmention_again_insert_comment', $comment, $post_id, $source, $target, $raw );
 
 		$comment_id = false;
 
 		$avatar = false;
-		if( isset( $comment['comment_avatar'] ) ) {
-			$avatar = $comment['comment_avatar'];
-			unset( $comment['comment_avatar'] );
+		if( isset( $comment['comment_meta'] ) ) {
+			$meta = $comment['comment_meta'];
+			unset( $comment['comment_meta'] );
 		}
 
 		// safety first
@@ -638,8 +635,11 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		if ( $comment_id = wp_new_comment( $comment ) ) {
 
 			// add avatar for later use if present
-			if ( ! empty( $avatar ) )
-				update_comment_meta( $comment_id, 'avatar', $avatar );
+			if ( ! empty( $meta ) ) {
+				foreach ( $meta as $key => $m ) {
+					update_comment_meta( $comment_id, $key, $m );
+				}
+			}
 
 			// full raw response for the vote, just in case
 			update_comment_meta( $comment_id, 'webmention_source_mf2', $raw );
@@ -659,6 +659,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		// re-add flood control
 		add_filter( 'check_comment_flood', 'check_comment_flood_db', 10, 3 );
+		do_action ( 'wp_webmention_again_insert_comment' );
 
 		static::debug( $r );
 

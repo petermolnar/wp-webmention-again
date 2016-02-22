@@ -3,7 +3,7 @@
 Plugin Name: wp-webmention-again
 Plugin URI: https://github.com/petermolnar/wp-webmention-again
 Description:
-Version: 0.3
+Version: 0.4
 Author: Peter Molnar <hello@petermolnar.eu>
 Author URI: http://petermolnar.eu/
 License: GPLv3
@@ -452,8 +452,9 @@ class WP_Webmention_Again {
 	 */
 	protected static function validate_local ( $url ) {
 		// normalize url scheme, url_to_postid will take care of it anyway
-		$url = preg_replace( '/^https?:\/\//i', 'http://', $url );
-		return url_to_postid( $url );
+		$url = preg_replace( '/^https?:\/\//i', 'http://', strtolower($url) );
+		$postid = url_to_postid( $url );
+		return apply_filters ('wp_webmention_again_validate_local', $postid , $url );
 	}
 
 	/**
