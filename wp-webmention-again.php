@@ -3,7 +3,7 @@
 Plugin Name: wp-webmention-again
 Plugin URI: https://github.com/petermolnar/wp-webmention-again
 Description:
-Version: 0.4
+Version: 0.5
 Author: Peter Molnar <hello@petermolnar.eu>
 Author URI: http://petermolnar.eu/
 License: GPLv3
@@ -622,8 +622,8 @@ $WP_Webmention_Again_Receiver = new WP_Webmention_Again_Receiver();
 
 // global send_webmention function
 if ( ! function_exists( 'send_webmention' ) ) {
-	function send_webmention( $source, $target ) {
-		return WP_Webmention_Again_Sender::queue ( 'out', $source, $target );
+	function send_webmention( $source, $target, $object = '', $object_id = 0 ) {
+		return WP_Webmention_Again_Sender::queue_add ( 'out', $source, $target, $object, $object_id );
 	}
 }
 
