@@ -212,14 +212,14 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		// check if source url is transmitted
 		if ( ! isset( $_POST['source'] ) ) {
 			status_header( 400 );
-			echo '"source" is missing';
+			echo "no source";
 			exit;
 		}
 
 		// check if target url is transmitted
 		if ( ! isset( $_POST['target'] ) ) {
 			status_header( 400 );
-			echo '"target" is missing';
+			echo "no target";
 			exit;
 		}
 
@@ -228,13 +228,29 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		if ( false === filter_var( $target, FILTER_VALIDATE_URL ) ) {
 			status_header( 400 );
-			echo '"target" is an invalid URL';
+			echo "{$target} is an invalid URL";
 			exit;
 		}
 
 		if ( false === filter_var( $source, FILTER_VALIDATE_URL ) ) {
 			status_header( 400 );
-			echo '"source" is an invalid URL';
+			echo "{$source} is an invalid URL";
+			exit;
+		}
+
+		$local = parse_url ( get_bloginfo('url'), PHP_URL_HOST );
+
+		// walk away if we're not the target
+		if ( ! stristr( $target, $local ) ) {
+			status_header( 400 );
+			echo "{$target} is pointing to another domain which is not this one";
+			exit;
+		}
+
+		// prevent selfpings
+		if ( stristr( $source, $local ) && stristr( $target, $local ) ) {
+			status_header( 400 );
+			echo "selfpings are disabled on this domain";
 			exit;
 		}
 
@@ -242,14 +258,14 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		if (! $post_id || 0 == $post_id ) {
 			status_header( 404 );
-			echo '"target" POST not found.';
+			echo "can't find target entry for {$target}";
 			exit;
 		}
 
 		// check if pings are allowed
 		if ( ! pings_open( $post_id ) ) {
 			status_header( 403 );
-			echo 'Pings are disabled for this post';
+			echo "pings and webmentions are not accepted for this entry";
 			exit;
 		}
 
@@ -530,16 +546,92 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		$content = '';
 		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['html'] ) )
 			$content = $item['properties']['content']['html'];
-		if ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['value'] ) )
+		elseif ( isset( $item['properties']['content'] ) && isset( $item['properties']['content']['value'] ) )
 			$content = $item['properties']['content']['value'];
-
-		$c['comment_content'] = wp_filter_kses ( $content );
 
 		// REACJI
 		$emoji = EmojiRecognizer::isSingleEmoji( $content );
 
 		if ( $emoji )
 			$c['comment_type'] = 'reacji';
+
+		$content = apply_filters ( 'wp_webmention_again_comment_content', $content );
+		//$c['comment_content'] = wp_filter_kses ( $content );
+		//$c['comment_content'] = wp_kses_post ( $content );
+		//static::debug( 'before kses: ' . $content );
+
+		$allowed_tags = apply_filters ( 'wp_webmention_again_kses_allowed_tags', array(
+				'a' => array(
+					'href' => true,
+					'rel' => true,
+				),
+				'abbr' => array(),
+				'acronym' => array(),
+				'b' => array(),
+				'blockquote' => array(),
+				'br' => array(),
+				'cite' => array(),
+				'code' => array(),
+				'del' => array(
+					'datetime' => true,
+				),
+				'dd' => array(),
+				'dfn' => array(),
+				'dl' => array(),
+				'dt' => array(),
+				'em' => array(),
+				'h1' => array(),
+				'h2' => array(),
+				'h3' => array(),
+				'h4' => array(),
+				'h5' => array(),
+				'h6' => array(),
+				'hr' => array(),
+				'i' => array(),
+				'img' => array(
+						'alt' => true,
+						'hspace' => true,
+						'longdesc' => true,
+						'vspace' => true,
+						'src' => true,
+				),
+				'ins' => array(
+						'datetime' => true,
+						'cite' => true,
+				),
+				'li' => array(),
+				'p' => array(),
+				'pre' => array(),
+				'q' => array(
+						'cite' => true,
+				),
+				'strike' => array(),
+				'strong' => array(),
+				'sub' => array(),
+				'sup' => array(),
+				'table' => array(
+				),
+				'td' => array(
+					'colspan' => true,
+					'rowspan' => true,
+				),
+				'th' => array(
+					'colspan' => true,
+					'rowspan' => true,
+				),
+				'thead' => array(),
+				'tbody' => array(),
+				'tr' => array(),
+				'tt' => array(),
+				'u' => array(),
+				'ul' => array(),
+				'ol' => array(
+					'start' => true,
+				),
+		));
+
+		//static::debug( 'after kses: ' . $content );
+		$c['comment_content'] = trim ( wp_kses( $content, $allowed_tags ) );
 
 		// process date
 		if ( isset( $item['properties']['modified'] ) )

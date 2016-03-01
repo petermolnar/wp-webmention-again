@@ -4,6 +4,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 
 	// cron handle for processing outgoing
 	const cron = 'webmention_send';
+	const pung = '_webmention_pung';
 
 	/**
 	 * regular cron interval for processing incoming
@@ -57,14 +58,14 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		add_action( static::cron, array( &$this, 'process' ) );
 
 		// register new posts
-		add_action( 'transition_post_status', array( &$this, 'queue' ), 98, 5 );
+		add_action( 'transition_post_status', array( &$this, 'queue_post' ), 98, 5 );
 
 	}
 
 	public function init () {
 
 		// get_pung is not restrictive enough
-		add_filter ( 'get_pung', array( &$this, 'get_pung' ) );
+		//add_filter ( 'get_pung', array( &$this, 'get_pung' ) );
 
 		if ( ! wp_get_schedule( static::cron ) )
 			wp_schedule_event( time(), static::cron, static::cron );
@@ -91,8 +92,8 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 	 *
 	 * @return array a better array of pinged urls
 	 *
-	 */
-	public function get_pung ( $pung ) {
+	 *
+	public static function get_pung ( $post ) {
 
 		foreach ($pung as $k => $e )
 			$pung[ $k ] = strtolower( $e );
@@ -111,7 +112,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 	 * @param string $old_status Previous post status
 	 * @param object $post WP Post object
 	 */
-	public static function queue( $new_status, $old_status, $post ) {
+	public static function queue_post( $new_status, $old_status, $post ) {
 
 		if ( ! static::is_post( $post ) ) {
 			static::debug( "Whoops, this is not a post." );
@@ -142,7 +143,21 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			$urls[ $k ] = strtolower( $url );
 
 		// remove all already pinged urls
-		$pung = get_pung( $post->ID );
+		$pung = get_post_meta( $post->ID, static::pung, false );
+
+		/*
+		// retrofill pung from pingback field, temporary
+		if ( empty ($pung) ) {
+			$_pung = get_pung ( $post->ID );
+			if ( ! empty ($_pung) ) {
+				$pung = $_pung;
+				foreach ( $_pung as $url ) {
+					add_post_meta( $post->ID, static::pung, $url, false );
+				}
+			}
+		}
+		*/
+
 		$urls = array_diff ( $urls, $pung );
 
 		foreach ( $urls as $target ) {
@@ -209,8 +224,10 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 				static::debug( "  sending succeeded!" );
 
 				$post_types = get_post_types( '', 'names' );
-				if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id )
-					add_ping( $send->object_id, $send->target );
+				if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id ) {
+					add_post_meta ( $send->object_id, static::pung, $send->target, false );
+					//add_ping( $send->object_id, $send->target );
+				}
 
 				static::queue_done ( $send->id, $s );
 			}
