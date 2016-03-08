@@ -3,8 +3,8 @@ Contributors: cadeyrn
 Donate link: https://paypal.me/petermolnar/3
 Tags: webmention, pingback, indieweb
 Requires at least: 4.3
-Tested up to: 4.4.1
-Stable tag: 0.5
+Tested up to: 4.4.2
+Stable tag: 0.5.1
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
 Required minimum PHP version: 5.3
@@ -32,6 +32,13 @@ Version numbering logic:
 * every A. indicates BIG changes.
 * every .B version indicates new features.
 * every ..C indicates bugfixes for A.B version.
+
+= 0.5.1 =
+*2016-03-08*
+
+* fixed bug of dropping mentions when structure wasn't in the expected form
+* better debugging
+
 
 = 0.5=
 *2016-03-01*

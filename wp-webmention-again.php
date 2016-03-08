@@ -132,12 +132,12 @@ class WP_Webmention_Again {
 			KEY `key` (`direction`)
 		) {$charset_collate};";
 
-		static::debug("Initiating DB {$dbname}");
+		static::debug("Initiating DB {$dbname}", 4);
 		try {
 			$wpdb->query( $db_command );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 	}
@@ -155,12 +155,12 @@ class WP_Webmention_Again {
 
 		$db_command = "DROP TABLE IF EXISTS `{$dbname}`;";
 
-		static::debug("Deleting DB {$dbname}");
+		static::debug("Deleting DB {$dbname}", 4);
 		try {
 			$wpdb->query( $db_command );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 	}
 
@@ -239,7 +239,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->query( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		return $id;
@@ -267,7 +267,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->query( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		return $req;
@@ -295,7 +295,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->query( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		return $req;
@@ -329,7 +329,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->query( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		return $req;
@@ -360,7 +360,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->get_results( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		if ( ! empty ( $req ) )
@@ -396,7 +396,7 @@ class WP_Webmention_Again {
 			$req = $wpdb->get_results( $q );
 		}
 		catch (Exception $e) {
-			static::debug('Something went wrong: ' . $e->getMessage());
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
 		if ( ! empty ( $req ) )
@@ -414,7 +414,7 @@ class WP_Webmention_Again {
 	 */
 	protected static function _wp_remote_get ( &$source ) {
 		$content = false;
-		static::debug( "    fetching {$source}" );
+		static::debug( "    fetching {$source}", 6);
 		$url = htmlspecialchars_decode( $source );
 		$q = wp_remote_get( $source );
 
@@ -424,21 +424,21 @@ class WP_Webmention_Again {
 		}
 
 		if ( !is_array( $q ) ) {
-			static::debug( "    $q is not an array. It should be one." );
+			static::debug( "    $q is not an array. It should be one.", 6);
 			return false;
 		}
 
 		if ( ! isset( $q['headers'] ) || ! is_array( $q['headers'] ) ) {
-			static::debug( "    missing response headers." );
+			static::debug( "    missing response headers.", 6);
 			return false;
 		}
 
 		if ( ! isset( $q['body'] ) || empty( $q['body'] ) ) {
-			static::debug( "    missing body" );
+			static::debug( "    missing body", 6);
 			return false;
 		}
 
-		static::debug('Headers: ' . json_encode($q['headers']));
+		static::debug('Headers: ' . json_encode($q['headers']), 7);
 
 		return $q;
 	}
@@ -586,30 +586,64 @@ class WP_Webmention_Again {
 		return $r;
 	}
 
+
 	/**
+	 *
 	 * debug messages; will only work if WP_DEBUG is on
 	 * or if the level is LOG_ERR, but that will kill the process
 	 *
 	 * @param string $message
 	 * @param int $level
+	 *
+	 * @output log to syslog | wp_die on high level
+	 * @return false on not taking action, true on log sent
 	 */
-	protected static function debug( $message, $level = LOG_NOTICE ) {
+	public static function debug( $message, $level = LOG_NOTICE ) {
+		if ( empty( $message ) )
+			return false;
+
 		if ( @is_array( $message ) || @is_object ( $message ) )
-			$message = json_encode( $message );
+			$message = json_encode($message);
 
+		$levels = array (
+			LOG_EMERG => 0, // system is unusable
+			LOG_ALERT => 1, // Alert 	action must be taken immediately
+			LOG_CRIT => 2, // Critical 	critical conditions
+			LOG_ERR => 3, // Error 	error conditions
+			LOG_WARNING => 4, // Warning 	warning conditions
+			LOG_NOTICE => 5, // Notice 	normal but significant condition
+			LOG_INFO => 6, // Informational 	informational messages
+			LOG_DEBUG => 7, // Debug 	debug-level messages
+		);
 
-		switch ( $level ) {
-			case LOG_ERR :
-				wp_die( '<h1>Error:</h1>' . '<p>' . $message . '</p>' );
-				exit;
-			default:
-				if ( ! defined( 'WP_DEBUG' ) || true != WP_DEBUG )
-					return;
-				break;
+		// number for number based comparison
+		// should work with the defines only, this is just a make-it-sure step
+		$level_ = $levels [ $level ];
+
+		// in case WordPress debug log has a minimum level
+		if ( defined ( 'WP_DEBUG_LEVEL' ) ) {
+			$wp_level = $levels [ WP_DEBUG_LEVEL ];
+			if ( $level_ > $wp_level ) {
+				return false;
+			}
 		}
 
-		error_log(  __CLASS__ . ": " . $message );
+		// ERR, CRIT, ALERT and EMERG
+		if ( 3 >= $level_ ) {
+			wp_die( '<h1>Error:</h1>' . '<p>' . $message . '</p>' );
+			exit;
+		}
+
+		$trace = debug_backtrace();
+		$caller = $trace[1];
+		$parent = $caller['function'];
+
+		if (isset($caller['class']))
+			$parent = $caller['class'] . '::' . $parent;
+
+		return error_log( "{$parent}: {$message}" );
 	}
+
 
 }
 

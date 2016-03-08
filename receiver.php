@@ -305,12 +305,12 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 					! isset( $received->source ) ||
 					  empty( $received->source )
 			) {
-					static::debug( "  target or souce empty, aborting" );
+					static::debug( "  target or souce empty, aborting", 6 );
 					static::queue_del ( $received->id );
 					continue;
 				}
 
-			static::debug( "processing webmention:  target -> {$received->target}, source -> {$received->source}" );
+			static::debug( "processing webmention:  target -> {$received->target}, source -> {$received->source}", 5);
 
 			if ( empty( $received->object_id ) || 0 == $received->object_id )
 				$post_id = url_to_postid ( $received->target );
@@ -320,14 +320,14 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			$post = get_post ( $post_id );
 
 			if ( ! static::is_post( $post ) ) {
-				static::debug( "  no post found for this mention, try again later, who knows?" );
+				static::debug( "  no post found for this mention, try again later, who knows?", 6);
 				//static::queue_del ( $received->id );
 				continue;
 			}
 
 			// too many retries, drop this mention and walk away
 			if ( $received->tries >= static::retry() ) {
-				static::debug( "  this mention was tried earlier and failed too many times, drop it" );
+				static::debug( "  this mention was tried earlier and failed too many times, drop it", 5);
 				static::queue_del ( $received->id );
 				continue;
 			}
@@ -339,7 +339,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			$remote = static::try_receive_remote( $post_id, $received->source, $received->target );
 
 			if ( false === $remote || empty( $remote ) ) {
-				static::debug( "  parsing this mention failed, retrying next time" );
+				static::debug( "  parsing this mention failed, retrying next time", 6);
 				continue;
 			}
 
@@ -348,15 +348,15 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			$ins = static::insert_comment ( $post_id, $received->source, $received->target, $remote, $c );
 
 			if ( true === $ins ) {
-				static::debug( "  duplicate (or something similar): this queue element has to be ignored; deleting queue entry" );
+				static::debug( "  duplicate (or something similar): this queue element has to be ignored; deleting queue entry", 5);
 					static::queue_del ( $received->id );
 			}
 			elseif ( is_numeric( $ins ) ) {
-				static::debug( "  all went well, we have a comment id: {$ins}, deleting queue entry" );
+				static::debug( "  all went well, we have a comment id: {$ins}, deleting queue entry", 5);
 				static::queue_done ( $received->id );
 			}
 			else {
-				static::debug( "This is unexpected. Try again." );
+				static::debug( "This is unexpected. Try again.", 6);
 			}
 		}
 	}
@@ -401,27 +401,27 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		// check if source really links to target
 		// this could be a temporary error, so we'll retry later this one as well
 		if ( false == $found ) {
-			static::debug( "    missing link to {$t} in remote body" );
+			static::debug( "    missing link to {$t} in remote body", 6);
 			return false;
 		}
 
 		$ctype = isset( $q['headers']['content-type'] ) ? $q['headers']['content-type'] : 'text/html';
 
 		if ( "text/plain" == $ctype ) {
-			static::debug( "  interesting, plain text webmention. I'm not prepared for this yet" );
+			static::debug( "  interesting, plain text webmention. I'm not prepared for this yet", 6);
 			return false;
 		}
 		elseif ( $ctype == "application/json" ) {
-			static::debug( "  content is JSON" );
+			static::debug( "  content is JSON", 6);
 			$content = json_decode( $q['body'], true );
 		}
 		else {
-			static::debug( "  content is (probably) html, trying to parse it with MF2" );
+			static::debug( "  content is (probably) html, trying to parse it with MF2", 6);
 			try {
 				$content = Mf2\parse( $q['body'], $source );
 			}
 			catch ( Exception $e ) {
-				static::debug( "  parsing MF2 failed: " . $e->getMessage() );
+				static::debug( "  parsing MF2 failed: " . $e->getMessage(), 4);
 				return false;
 			}
 
@@ -465,7 +465,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		if ( isset( $content['items']['properties'] ) && isset( $content['items']['type'] ) ) {
 			$item = $content['items'];
 		}
-		elseif ( is_array($content['items'] ) && ! empty( $content['items']['type'] ) ) {
+		elseif ( is_array($content['items'] ) ) {
 			foreach ( $content['items'] as $i ) {
 				if ( 'h-entry' == $i['type'] ) {
 					$items[] = $i;
@@ -487,7 +487,8 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 		// if the entry wasn't found, fall back to a regular mention
 		if (! $item || empty( $item )) {
-			static::debug('    no parseable h-entry found, saving as standard mention comment');
+			static::debug('    no parseable h-entry found, saving as standard mention comment', 6);
+			static::debug('    the content was:' . json_encode( $content ), 7);
 			return $c;
 		}
 
@@ -702,21 +703,21 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 			);
 
 			//test if we already have this imported
-			static::debug( "checking comment existence (with date) for post #{$post_id}" );
+			static::debug( "checking comment existence (with date) for post #{$post_id}", 6);
 		}
 		else {
 			// we do need a date
 			$comment['comment_date'] = date( "Y-m-d H:i:s" );
 			$comment['comment_date_gmt'] = date( "Y-m-d H:i:s" );
 
-			static::debug( "checking comment existence (no date) for post #{$post_id}" );
+			static::debug( "checking comment existence (no date) for post #{$post_id}", 6);
 		}
 
 		$existing = get_comments( $testargs );
 
 		// no matching comment yet, insert it
 		if ( ! empty( $existing ) ) {
-			static::debug ( "comment already exists" );
+			static::debug ( "comment already exists", 6);
 			return true;
 		}
 
@@ -753,7 +754,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		add_filter( 'check_comment_flood', 'check_comment_flood_db', 10, 3 );
 		do_action ( 'wp_webmention_again_insert_comment' );
 
-		static::debug( $r );
+		static::debug( $r, 7);
 
 		return $comment_id;
 	}

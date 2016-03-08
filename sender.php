@@ -115,7 +115,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 	public static function queue_post( $new_status, $old_status, $post ) {
 
 		if ( ! static::is_post( $post ) ) {
-			static::debug( "Whoops, this is not a post." );
+			static::debug( "Whoops, this is not a post.", 6);
 			return false;
 		}
 
@@ -124,7 +124,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			return false;
 		}
 
-		static::debug("Trying to get urls for #{$post->ID}");
+		static::debug("Trying to get urls for #{$post->ID}", 6);
 
 		// try to avoid redirects, so no shortlink is sent for now as source
 		$source = get_permalink( $post->ID );
@@ -172,7 +172,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			$r = static::queue_add ( 'out', $source, $target, $post->post_type, $post->ID );
 
 			if ( !$r )
-				static::debug( "  tried adding post #{$post->ID}, url: {$target} to mention queue, but it didn't go well" );
+				static::debug( "  tried adding post #{$post->ID}, url: {$target} to mention queue, but it didn't go well", 4);
 		}
 
 	}
@@ -197,16 +197,16 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 					! isset( $send->source ) ||
 					  empty( $send->source )
 			) {
-					static::debug( "  target or souce empty, aborting" );
+					static::debug( "  target or souce empty, aborting", 6);
 					static::queue_del ( $send->id );
 					continue;
 				}
 
-			static::debug( "processing webmention:  target -> {$send->target}, source -> {$send->source}" );
+			static::debug( "processing webmention:  target -> {$send->target}, source -> {$send->source}", 5 );
 
 			// too many retries, drop this mention and walk away
 			if ( $send->tries >= static::retry() ) {
-				static::debug( "  this mention was tried earlier and failed too many times, drop it" );
+				static::debug( "  this mention was tried earlier and failed too many times, drop it", 5);
 				static::queue_done ( $send->id );
 				continue;
 			}
@@ -218,10 +218,10 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			$s = static::send( $send->source, $send->target );
 
 			if ( is_wp_error ( $s )  ) {
-					static::debug( "    sending failed: " . $s->get_error_message() );
+					static::debug( "    sending failed: " . $s->get_error_message(), 5);
 			}
 			else {
-				static::debug( "  sending succeeded!" );
+				static::debug( "  sending succeeded!", 5);
 
 				$post_types = get_post_types( '', 'names' );
 				if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id ) {
@@ -268,7 +268,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 				'timeout' => static::remote_timeout(),
 			);
 
-			static::debug( "Sending webmention to: " .$webmention_server_url . " as: " . $args['body'] );
+			static::debug( "Sending webmention to: " .$webmention_server_url . " as: " . $args['body'], 5);
 			$response = wp_remote_post( $webmention_server_url, $args );
 
 			// use the response to do something usefull
@@ -307,7 +307,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		$response = wp_remote_head( $url, array( 'timeout' => static::remote_timeout(), 'httpversion' => '1.0' ) );
 
 		if ( is_wp_error( $response ) ) {
-			static::debug( "Something went wrong: " . $response->get_error_message() );
+			static::debug( "Something went wrong: " . $response->get_error_message(), 5);
 			return false;
 		}
 
