@@ -3,7 +3,7 @@
 Plugin Name: wp-webmention-again
 Plugin URI: https://github.com/petermolnar/wp-webmention-again
 Description:
-Version: 0.5
+Version: 0.5.1
 Author: Peter Molnar <hello@petermolnar.eu>
 Author URI: http://petermolnar.eu/
 License: GPLv3
