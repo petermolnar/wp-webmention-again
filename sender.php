@@ -217,8 +217,8 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			// try sending
 			$s = static::send( $send->source, $send->target );
 
-			if ( is_wp_error ( $s )  ) {
-					static::debug( "    sending failed: " . $s->get_error_message(), 5);
+			if ( false == $s ) {
+					static::debug( "    sending failed: ", 5);
 			}
 			else {
 				static::debug( "  sending succeeded!", 5);
@@ -274,7 +274,25 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			// use the response to do something usefull
 			// do_action( 'webmention_post_send', $response, $source, $target, $post_ID );
 
-			return $response;
+			if ( is_wp_error( $response ) ) {
+				static::debug( "sending failed: " . $response->get_error_message(), 4);
+				return false;
+			}
+
+			if ( ! is_array( $response ) || ! isset( $response['response'] ) || ! isset( $response['response']['code'] ) || empty( $response['response']['code'] ) ) {
+				static::debug( "sending failed: the response is empty", 4);
+				return false;
+			}
+
+			if ( 200 <= $response['response']['code'] && 300 > $response['response']['code'] ) {
+				static::debug( "sending succeeded: ${$response['response']['code']}, message: {$response['response']['message']}", 5);
+				return true;
+			}
+			else {
+				static::debug( "wrong response code, this sending probably failed: {$response['response']['code']}, message: {$response['response']['message']}", 4);
+				return false;
+			}
+
 		}
 
 		return false;

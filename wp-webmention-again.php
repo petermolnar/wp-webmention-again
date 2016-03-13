@@ -332,6 +332,8 @@ class WP_Webmention_Again {
 			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
+		//do_action ( 'wp_webmention_again_done', $id );
+
 		return $req;
 	}
 
@@ -354,7 +356,7 @@ class WP_Webmention_Again {
 		global $wpdb;
 		$dbname = $wpdb->prefix . static::tablename;
 
-		$q = $wpdb->prepare( "SELECT * FROM `{$dbname}` WHERE `direction` = '%s' and `status` = 0 LIMIT %d;", $direction, $limit );
+		$q = $wpdb->prepare( "SELECT * FROM `{$dbname}` WHERE `direction` = '%s' and `status` = 0 and `tries` < ". static::retry() ." LIMIT %d;", $direction, $limit );
 
 		try {
 			$req = $wpdb->get_results( $q );
@@ -404,6 +406,35 @@ class WP_Webmention_Again {
 
 		return false;
 	}
+
+	/**
+	 * get a single webmention based on id
+	 *
+	 * @param int $id webmention id
+	 *
+	 * @return array of webmention
+	 *
+	 *
+	public static function webmention_get ( $id ) {
+
+		global $wpdb;
+		$dbname = $wpdb->prefix . static::tablename;
+
+		$q = $wpdb->prepare( "SELECT * FROM `{$dbname}` WHERE `id` = '%d'", $id );
+
+		try {
+			$req = $wpdb->get_results( $q );
+		}
+		catch (Exception $e) {
+			static::debug('Something went wrong: ' . $e->getMessage(), 4);
+		}
+
+		if ( ! empty ( $req ) )
+			return $req;
+
+		return false;
+	}
+	*/
 
 	/**
 	 * extended wp_remote_get with debugging
