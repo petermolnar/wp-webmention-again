@@ -319,6 +319,9 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 			$post = get_post ( $post_id );
 
+			// increment retries
+			static::queue_inc ( $received->id );
+
 			if ( ! static::is_post( $post ) ) {
 				static::debug( "  no post found for this mention, try again later, who knows?", 6);
 				//static::queue_del ( $received->id );
@@ -331,9 +334,6 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 				//static::queue_del ( $received->id );
 				continue;
 			}
-
-			// increment retries
-			static::queue_inc ( $received->id );
 
 			// validate target
 			$remote = static::try_receive_remote( $post_id, $received->source, $received->target );

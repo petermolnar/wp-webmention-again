@@ -143,7 +143,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			$urls[ $k ] = strtolower( $url );
 
 		// remove all already pinged urls
-		$pung = get_post_meta( $post->ID, static::pung, false );
+		//$pung = get_post_meta( $post->ID, static::pung, false );
 
 		/*
 		// retrofill pung from pingback field, temporary
@@ -158,7 +158,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		}
 		*/
 
-		$urls = array_diff ( $urls, $pung );
+		//$urls = array_diff ( $urls, $pung );
 
 		foreach ( $urls as $target ) {
 
@@ -223,11 +223,11 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			else {
 				static::debug( "  sending succeeded!", 5);
 
-				$post_types = get_post_types( '', 'names' );
-				if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id ) {
-					add_post_meta ( $send->object_id, static::pung, $send->target, false );
+				//$post_types = get_post_types( '', 'names' );
+				//if ( in_array( $send->object_type, $post_types ) && 0 != $send->object_id ) {
+					//add_post_meta ( $send->object_id, static::pung, $send->target, false );
 					//add_ping( $send->object_id, $send->target );
-				}
+				//}
 
 				static::queue_done ( $send->id, $s );
 			}
@@ -285,7 +285,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			}
 
 			if ( 200 <= $response['response']['code'] && 300 > $response['response']['code'] ) {
-				static::debug( "sending succeeded: ${$response['response']['code']}, message: {$response['response']['message']}", 5);
+				static::debug( "sending succeeded: {$response['response']['code']}, message: {$response['response']['message']}", 5);
 				return true;
 			}
 			else {
