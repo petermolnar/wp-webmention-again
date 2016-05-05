@@ -485,6 +485,7 @@ class WP_Webmention_Again {
 		// normalize url scheme, url_to_postid will take care of it anyway
 		$url = preg_replace( '/^https?:\/\//i', 'http://', strtolower($url) );
 		$postid = url_to_postid( $url );
+		static::debug( "Found postid for {$url}: {$postid}", 6);
 		return apply_filters ('wp_webmention_again_validate_local', $postid , $url );
 	}
 
