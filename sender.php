@@ -119,7 +119,8 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			return false;
 		}
 
-		if ( 'publish' != $new_status ) {
+		// send delete messages when trashed
+		if ( 'publish' != $new_status || 'trash' != $new_status ) {
 			return false;
 		}
 		else {

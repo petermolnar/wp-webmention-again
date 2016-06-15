@@ -88,6 +88,24 @@ class WP_Webmention_Again {
 		// extend current cron schedules with our entry
 		add_filter( 'cron_schedules', array(&$this, 'add_cron_schedule' ) );
 
+		static::lookfordeleted();
+
+	}
+
+	public static function lookfordeleted() {
+		$url = substr( rtrim( ltrim( $_SERVER['REQUEST_URI'], '/' ), '/' ), 0, 191 ) . '__trashed';
+		$query = new WP_Query( array (
+			'name' => $url,
+			'post_status' => 'trash',
+			'post_type' => 'any'
+		));
+
+		if ( ! empty( $query->posts ) && $query->is_singular ) {
+			status_header(410);
+			nocache_headers();
+			die('This post was removed.');
+		}
+
 	}
 
 	/**
