@@ -93,14 +93,19 @@ class WP_Webmention_Again {
 	}
 
 	public static function lookfordeleted() {
-		$url = substr( rtrim( ltrim( $_SERVER['REQUEST_URI'], '/' ), '/' ), 0, 191 ) . '__trashed';
+		$url = substr( trim( $_SERVER['REQUEST_URI'], '/' ), 0, 191 );
+
+		if ( empty($url) )
+			return false;
+
 		$query = new WP_Query( array (
-			'name' => $url,
+			'name' => $url . '__trashed',
 			'post_status' => 'trash',
 			'post_type' => 'any'
 		));
 
 		if ( ! empty( $query->posts ) && $query->is_singular ) {
+			static::debug("Found deleted post for {$url}");
 			status_header(410);
 			nocache_headers();
 			die('This post was removed.');

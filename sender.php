@@ -120,7 +120,8 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		}
 
 		// send delete messages when trashed
-		if ( 'publish' != $new_status || 'trash' != $new_status ) {
+		if ( 'publish' != $new_status && 'trash' != $new_status ) {
+			static::debug( "Ignoring post; neither published nor trashed" );
 			return false;
 		}
 		else {
@@ -131,6 +132,9 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 
 		// try to avoid redirects, so no shortlink is sent for now as source
 		$source = get_permalink( $post->ID );
+
+		if ( 'trash' == $new_status )
+			$source = str_replace( '__trashed', '', $source );
 
 		// process the content as if it was the_content()
 		$content = static::get_the_content( $post );
@@ -223,7 +227,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			$s = static::send( $send->source, $send->target );
 
 			if ( false == $s ) {
-					static::debug( "    sending failed: ", 5);
+					static::debug( "    sending failed", 5);
 			}
 			else {
 				static::debug( "  sending succeeded!", 5);
@@ -251,18 +255,23 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		if ( isset( $options['disable_selfpings_same_url'] ) &&
 				 $options['disable_selfpings_same_url'] == '1' &&
 				 $source === $target
-			 )
-			return false;
+			 ) {
+					static::debug("Refusing to selfping the same url", 6);
+					return false;
+			 }
 
 		// stop selfpings on the same domain
 		if ( isset( $options['disable_selfpings_same_domain'] ) &&
 				 $options['disable_selfpings_same_domain'] == '1' &&
 				 parse_url( $source, PHP_URL_HOST ) == parse_url( $target, PHP_URL_HOST )
-			 )
-			return false;
+			 ) {
+					static::debug("Refusing to selfping the self domain", 6);
+					return false;
+			 }
 
 		// discover the webmention endpoint
 		$webmention_server_url = static::discover_endpoint( $target );
+		static::debug("Endpoint discovered as: {$webmention_server_url}", 6);
 
 		// if I can't find an endpoint, perhaps you can!
 		$webmention_server_url = apply_filters( 'webmention_server_url', $webmention_server_url, $target );
