@@ -117,7 +117,7 @@ class WP_Webmention_Again {
 		}
 
 		$db_command = "CREATE TABLE IF NOT EXISTS `{$dbname}` (
-			`id` char(160) CHARACTER SET ascii NOT NULL,
+			`id` int(11) unsigned NOT NULL AUTO_INCREMENT,
 			`date` datetime NOT NULL,
 			`direction` varchar(12) NOT NULL DEFAULT 'in',
 			`tries` int(4) NOT NULL DEFAULT '0',
@@ -216,7 +216,7 @@ class WP_Webmention_Again {
 	 * @return false|string - false on failure, inserted ID on success
 	 *
 	 */
-	public static function queue_add ( $direction, $source, $target, $object = '', $object_id = 0 ) {
+	public static function queue_add ( $direction, $source, $target, $object = '', $object_id = 0, $epoch = false ) {
 		global $wpdb;
 		$dbname = $wpdb->prefix . static::tablename;
 
@@ -225,15 +225,16 @@ class WP_Webmention_Again {
 		if ( ! in_array ( $direction, $valid_directions ) )
 			return false;
 
-		$id = sha1($source . $target);
+		//$id = sha1($source . $target . );
+		//$id = uniqid();
 
-		if ( static::queue_exists ( $direction, $source, $target ) )
+		if ( static::queue_exists ( $direction, $source, $target, $epoch ) )
 			return true;
 
 		$q = $wpdb->prepare( "INSERT INTO `{$dbname}`
-			(`id`,`date`,`direction`, `tries`,`source`, `target`, `object_type`, `object_id`, `status`, `note` ) VALUES
-			( '%s', NOW(), '%s', 0, '%s', '%s', '%s', %d, 0, '' );",
-			$id, $direction, $source, $target, $object, $object_id );
+			(`date`,`direction`, `tries`,`source`, `target`, `object_type`, `object_id`, `status`, `note` ) VALUES
+			( NOW(), '%s', 0, '%s', '%s', '%s', %d, 0, '' );",
+			$direction, $source, $target, $object, $object_id );
 
 		try {
 			$req = $wpdb->query( $q );
@@ -242,7 +243,7 @@ class WP_Webmention_Again {
 			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
-		return $id;
+		return $wpdb->insert_id;
 	}
 
 	/**
@@ -377,10 +378,11 @@ class WP_Webmention_Again {
 	 * @param string $direction - 'in' or 'out'
 	 * @param string $source - source URL
 	 * @param string $target - target URL
+	 * @param int $epoch - epoch to compare date with; used for updates
 	 *
 	 * @return bool true on existing element, false on not found
 	 */
-	public static function queue_exists ( $direction, $source, $target ) {
+	public static function queue_exists ( $direction, $source, $target, $epoch = false ) {
 
 		global $wpdb;
 		$dbname = $wpdb->prefix . static::tablename;
@@ -390,19 +392,27 @@ class WP_Webmention_Again {
 		if ( ! in_array ( $direction, $valid_directions ) )
 			return false;
 
-		$id = sha1($source . $target);
-
-		$q = $wpdb->prepare( "SELECT date FROM `{$dbname}` WHERE `direction` = '%s' and `id` = '%s';", $direction, $id );
+		$q = $wpdb->prepare( "SELECT date, status FROM `{$dbname}` WHERE `direction` = '%s' and `source` = '%s' and `target`='%s' ORDER BY date DESC LIMIT 1;", $direction, $source, $target );
 
 		try {
-			$req = $wpdb->get_results( $q );
+			$req = $wpdb->get_row( $q );
 		}
 		catch (Exception $e) {
 			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
 
-		if ( ! empty ( $req ) )
+		if ( ! empty ( $req ) ) {
+
+			if ( false != $epoch && 0 != $req->status ) {
+				$dbtime = strtotime( $req->date );
+
+				if ( $epoch > $dbtime ) { // the post was recently updated
+					return false;
+				}
+			}
+
 			return true;
+		}
 
 		return false;
 	}

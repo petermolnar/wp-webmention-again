@@ -120,8 +120,10 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 		}
 
 		if ( 'publish' != $new_status ) {
-			static::debug( "Not adding {$post->ID} to mention queue yet; not published" );
 			return false;
+		}
+		else {
+			static::debug( "Adding {$post->ID} to mention queue" );
 		}
 
 		static::debug("Trying to get urls for #{$post->ID}", 6);
@@ -169,7 +171,9 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			if ( $s_domain == $t_domain )
 				continue;
 
-			$r = static::queue_add ( 'out', $source, $target, $post->post_type, $post->ID );
+
+			$post_updated = get_post_modified_time( 'U', false, $post, false );
+			$r = static::queue_add ( 'out', $source, $target, $post->post_type, $post->ID, $post_updated );
 
 			if ( !$r )
 				static::debug( "  tried adding post #{$post->ID}, url: {$target} to mention queue, but it didn't go well", 4);
