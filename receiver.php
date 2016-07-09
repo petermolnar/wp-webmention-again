@@ -273,6 +273,9 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 		//$r = static::queue_receive( $source, $target, $post_id );
 		$r = static::queue_add( 'in', $source, $target, 'post', $post_id );
 
+		// trigger archive call
+		wp_schedule_single_event( time() + 120, 'trigger_archive_org', array ( 'url' => $source ) );
+
 		if ( true == $r ) {
 			status_header( 202 );
 			echo 'Webmention accepted in the queue.';
@@ -324,14 +327,14 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 			if ( ! static::is_post( $post ) ) {
 				static::debug( "  no post found for this mention, try again later, who knows?", 6);
-				//static::queue_del ( $received->id );
+				static::queue_del ( $received->id );
 				continue;
 			}
 
 			// too many retries, drop this mention and walk away
 			if ( $received->tries >= static::retry() ) {
 				static::debug( "  this mention was tried earlier and failed too many times, drop it", 5);
-				//static::queue_del ( $received->id );
+				static::queue_del ( $received->id );
 				continue;
 			}
 
@@ -349,12 +352,11 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 
 			if ( true === $ins ) {
 				static::debug( "  duplicate (or something similar): this queue element has to be ignored; deleting queue entry", 5);
-					//static::queue_del ( $received->id );
-					static::queue_done ( $received->id );
+					static::queue_del ( $received->id );
 			}
 			elseif ( is_numeric( $ins ) ) {
 				static::debug( "  all went well, we have a comment id: {$ins}, deleting queue entry", 5);
-				static::queue_done ( $received->id );
+				static::queue_del ( $received->id );
 			}
 			else {
 				static::debug( "This is unexpected. Try again.", 6);

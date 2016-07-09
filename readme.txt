@@ -3,11 +3,10 @@ Contributors: cadeyrn
 Donate link: https://paypal.me/petermolnar/3
 Tags: webmention, pingback, indieweb
 Requires at least: 4.3
-Tested up to: 4.4.2
-Stable tag: 0.5.1
+Tested up to: 4.5.3
+Stable tag: 0.6
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
-Required minimum PHP version: 5.3
 
 Alternative [Webmentions](http://indiewebcamp.com/webmention-spec) plugin for WordPress
 
@@ -32,6 +31,14 @@ Version numbering logic:
 * every A. indicates BIG changes.
 * every .B version indicates new features.
 * every ..C indicates bugfixes for A.B version.
+
+= 0.6 =
+*2016-07-09*
+
+* converted in-database queue to real queue
+* keeping incoming and outgoing webmentions in webmentions.log in the plugin directory
+* trigger archive.org save of source in case of incoming and target in case of outgoing webmentions
+
 
 = 0.5.1 =
 *2016-03-08*

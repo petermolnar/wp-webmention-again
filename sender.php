@@ -216,7 +216,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			// too many retries, drop this mention and walk away
 			if ( $send->tries >= static::retry() ) {
 				static::debug( "  this mention was tried earlier and failed too many times, drop it", 5);
-				static::queue_done ( $send->id );
+				static::queue_del( $send->id );
 				continue;
 			}
 
@@ -238,7 +238,7 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 					//add_ping( $send->object_id, $send->target );
 				//}
 
-				static::queue_done ( $send->id, $s );
+				static::queue_del ( $send->id );
 			}
 		}
 	}
@@ -267,7 +267,10 @@ class WP_Webmention_Again_Sender extends WP_Webmention_Again {
 			 ) {
 					static::debug("Refusing to selfping the self domain", 6);
 					return false;
-			 }
+		}
+
+		// trigger archive call here
+		wp_schedule_single_event( time() + 120, 'trigger_archive_org', array ( 'url' => $target ) );
 
 		// discover the webmention endpoint
 		$webmention_server_url = static::discover_endpoint( $target );

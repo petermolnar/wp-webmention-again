@@ -3,11 +3,10 @@
 Plugin Name: wp-webmention-again
 Plugin URI: https://github.com/petermolnar/wp-webmention-again
 Description:
-Version: 0.5.1
+Version: 0.6
 Author: Peter Molnar <hello@petermolnar.eu>
 Author URI: http://petermolnar.eu/
 License: GPLv3
-Required minimum PHP version: 5.3
 */
 
 if ( ! class_exists( 'WP_Webmention_Again' ) ):
@@ -29,6 +28,8 @@ class WP_Webmention_Again {
 	const expire = 10;
 	// queue & history table name
 	const tablename = 'webmentions';
+
+	const logfile = __DIR__ . '/webmentions.log';
 
 	/**
 	 * regular cron interval for processing incoming
@@ -87,6 +88,8 @@ class WP_Webmention_Again {
 
 		// extend current cron schedules with our entry
 		add_filter( 'cron_schedules', array(&$this, 'add_cron_schedule' ) );
+
+		add_action( 'trigger_archive_org', array( &$this, 'archive' ) );
 
 		static::lookfordeleted();
 
@@ -265,6 +268,8 @@ class WP_Webmention_Again {
 		catch (Exception $e) {
 			static::debug('Something went wrong: ' . $e->getMessage(), 4);
 		}
+
+		static::log ( $direction, $source, $target );
 
 		return $wpdb->insert_id;
 	}
@@ -707,6 +712,30 @@ class WP_Webmention_Again {
 			$parent = $caller['class'] . '::' . $parent;
 
 		return error_log( "{$parent}: {$message}" );
+	}
+
+
+	/**
+	 */
+	public static function log( $direction, $source, $target, $object, $object_id, $epoch ) {
+		$date = date("c");
+		$logmsg = "{$date} {$direction} {$source} {$target}\n";
+
+		file_put_contents ( static::logfile , $logmsg, FILE_APPEND|LOCK_EX );
+	}
+
+	/**
+	 *
+	 */
+	public static function archive( $url ) {
+		$args = array(
+			'timeout' => 60,
+			'redirection' => 5,
+			'httpversion' => '1.1',
+			'user-agent' => 'Lynx/2.8.9dev.1 libwww-FM/2.14 SSL-MM/1.4.1',
+		);
+
+		return wp_remote_get(  'https://web.archive.org/save/' . $url );
 	}
 
 
