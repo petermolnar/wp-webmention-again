@@ -62,7 +62,7 @@ class WP_Webmention_Again_Receiver extends WP_Webmention_Again {
 	 *
 	 */
 	protected static function endpoint() {
-		return apply_filters( 'wp-webmention-again-receiver_endpoint', 'webmention' );
+		return apply_filters( 'wp-webmention-again-receiver_endpoint', 'wp-webmention-again' );
 	}
 
 	public function __construct() {
